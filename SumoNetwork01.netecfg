@@ -1,13 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<!-- generated on 2026-04-18T14:23:34.751211+02:00 by Eclipse SUMO netedit 1.26.0
+<!-- generated on 2026-04-19T20:16:46.581567+02:00 by Eclipse SUMO netedit 1.26.0
 -->
 
 <neteditConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/neteditConfiguration.xsd">
 
     <input>
         <sumocfg-file value="run_01.sumocfg"/>
-        <route-files value="routes.rou.xml"/>
         <sumo-net-file value="SumoNetwork01.net.xml"/>
     </input>
 
