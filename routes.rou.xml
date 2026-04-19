@@ -1,0 +1,63 @@
+<?xml version="1.0" ?>
+<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
+    <!-- &#1060;&#1040;&#1047;&#1040;: &#1059;&#1090;&#1088;&#1086; (&#1063;&#1072;&#1089; &#1087;&#1080;&#1082; &#1085;&#1072; f_4) -->
+    <flow id="f_0_0" begin="0" end="3600" probability="0.03" from="-31272#6" to="-31272#7"/>
+    <flow id="f_1_0" begin="0" end="3600" probability="0.03" from="-30892#16" to="-31272#7"/>
+    <flow id="f_2_0" begin="0" end="3600" probability="0.03" from="-31272#6" to="--30892#16"/>
+    <flow id="f_3_0" begin="0" end="3600" probability="0.03" from="--31272#7" to="--30892#16"/>
+    <flow id="f_4_0" begin="0" end="3600" probability="0.25" from="--31272#7" to="--31272#6"/>
+    <flow id="f_5_0" begin="0" end="3600" probability="0.03" from="-30892#16" to="-30892#17"/>
+    <flow id="f_6_0" begin="0" end="3600" probability="0.03" from="--31272#7" to="-30892#17"/>
+    <flow id="f_7_0" begin="0" end="3600" probability="0.03" from="--30892#17" to="--31272#6"/>
+    <flow id="f_8_0" begin="0" end="3600" probability="0.03" from="-31272#6" to="--30892#16"/>
+    <flow id="f_9_0" begin="0" end="3600" probability="0.03" from="-30892#16" to="-31272#7"/>
+    <flow id="f_10_0" begin="0" end="3600" probability="0.03" from="--31272#7" to="-30892#17"/>
+    <flow id="f_11_0" begin="0" end="3600" probability="0.01" from="-30892#16" to="--31272#6"/>
+    <flow id="f_12_0" begin="0" end="3600" probability="0.03" from="-31272#6" to="-30892#17"/>
+    <flow id="f_13_0" begin="0" end="3600" probability="0.03" from="--30892#17" to="-31272#7"/>
+    <!-- &#1060;&#1040;&#1047;&#1040;: &#1044;&#1077;&#1085;&#1100; (&#1057;&#1088;&#1077;&#1076;&#1085;&#1080;&#1081; &#1090;&#1088;&#1072;&#1092;&#1080;&#1082;) -->
+    <flow id="f_0_3600" begin="3600" end="7200" probability="0.05" from="-31272#6" to="-31272#7"/>
+    <flow id="f_1_3600" begin="3600" end="7200" probability="0.05" from="-30892#16" to="-31272#7"/>
+    <flow id="f_2_3600" begin="3600" end="7200" probability="0.05" from="-31272#6" to="--30892#16"/>
+    <flow id="f_3_3600" begin="3600" end="7200" probability="0.05" from="--31272#7" to="--30892#16"/>
+    <flow id="f_4_3600" begin="3600" end="7200" probability="0.05" from="--31272#7" to="--31272#6"/>
+    <flow id="f_5_3600" begin="3600" end="7200" probability="0.05" from="-30892#16" to="-30892#17"/>
+    <flow id="f_6_3600" begin="3600" end="7200" probability="0.05" from="--31272#7" to="-30892#17"/>
+    <flow id="f_7_3600" begin="3600" end="7200" probability="0.05" from="--30892#17" to="--31272#6"/>
+    <flow id="f_8_3600" begin="3600" end="7200" probability="0.05" from="-31272#6" to="--30892#16"/>
+    <flow id="f_9_3600" begin="3600" end="7200" probability="0.05" from="-30892#16" to="-31272#7"/>
+    <flow id="f_10_3600" begin="3600" end="7200" probability="0.05" from="--31272#7" to="-30892#17"/>
+    <flow id="f_11_3600" begin="3600" end="7200" probability="0.05" from="-30892#16" to="--31272#6"/>
+    <flow id="f_12_3600" begin="3600" end="7200" probability="0.05" from="-31272#6" to="-30892#17"/>
+    <flow id="f_13_3600" begin="3600" end="7200" probability="0.05" from="--30892#17" to="-31272#7"/>
+    <!-- &#1060;&#1040;&#1047;&#1040;: &#1042;&#1077;&#1095;&#1077;&#1088; (&#1055;&#1088;&#1086;&#1073;&#1082;&#1072; &#1074; &#1086;&#1073;&#1088;&#1072;&#1090;&#1085;&#1091;&#1102; &#1089;&#1090;&#1086;&#1088;&#1086;&#1085;&#1091; f_11 &#1080; f_12) -->
+    <flow id="f_0_7200" begin="7200" end="10800" probability="0.03" from="-31272#6" to="-31272#7"/>
+    <flow id="f_1_7200" begin="7200" end="10800" probability="0.03" from="-30892#16" to="-31272#7"/>
+    <flow id="f_2_7200" begin="7200" end="10800" probability="0.03" from="-31272#6" to="--30892#16"/>
+    <flow id="f_3_7200" begin="7200" end="10800" probability="0.03" from="--31272#7" to="--30892#16"/>
+    <flow id="f_4_7200" begin="7200" end="10800" probability="0.03" from="--31272#7" to="--31272#6"/>
+    <flow id="f_5_7200" begin="7200" end="10800" probability="0.03" from="-30892#16" to="-30892#17"/>
+    <flow id="f_6_7200" begin="7200" end="10800" probability="0.03" from="--31272#7" to="-30892#17"/>
+    <flow id="f_7_7200" begin="7200" end="10800" probability="0.03" from="--30892#17" to="--31272#6"/>
+    <flow id="f_8_7200" begin="7200" end="10800" probability="0.03" from="-31272#6" to="--30892#16"/>
+    <flow id="f_9_7200" begin="7200" end="10800" probability="0.03" from="-30892#16" to="-31272#7"/>
+    <flow id="f_10_7200" begin="7200" end="10800" probability="0.03" from="--31272#7" to="-30892#17"/>
+    <flow id="f_11_7200" begin="7200" end="10800" probability="0.2" from="-30892#16" to="--31272#6"/>
+    <flow id="f_12_7200" begin="7200" end="10800" probability="0.25" from="-31272#6" to="-30892#17"/>
+    <flow id="f_13_7200" begin="7200" end="10800" probability="0.03" from="--30892#17" to="-31272#7"/>
+    <!-- &#1060;&#1040;&#1047;&#1040;: &#1053;&#1086;&#1095;&#1100; (&#1055;&#1091;&#1089;&#1090;&#1086;&#1090;&#1072;) -->
+    <flow id="f_0_10800" begin="10800" end="14400" probability="0.005" from="-31272#6" to="-31272#7"/>
+    <flow id="f_1_10800" begin="10800" end="14400" probability="0.005" from="-30892#16" to="-31272#7"/>
+    <flow id="f_2_10800" begin="10800" end="14400" probability="0.005" from="-31272#6" to="--30892#16"/>
+    <flow id="f_3_10800" begin="10800" end="14400" probability="0.005" from="--31272#7" to="--30892#16"/>
+    <flow id="f_4_10800" begin="10800" end="14400" probability="0.005" from="--31272#7" to="--31272#6"/>
+    <flow id="f_5_10800" begin="10800" end="14400" probability="0.005" from="-30892#16" to="-30892#17"/>
+    <flow id="f_6_10800" begin="10800" end="14400" probability="0.005" from="--31272#7" to="-30892#17"/>
+    <flow id="f_7_10800" begin="10800" end="14400" probability="0.005" from="--30892#17" to="--31272#6"/>
+    <flow id="f_8_10800" begin="10800" end="14400" probability="0.005" from="-31272#6" to="--30892#16"/>
+    <flow id="f_9_10800" begin="10800" end="14400" probability="0.005" from="-30892#16" to="-31272#7"/>
+    <flow id="f_10_10800" begin="10800" end="14400" probability="0.005" from="--31272#7" to="-30892#17"/>
+    <flow id="f_11_10800" begin="10800" end="14400" probability="0.005" from="-30892#16" to="--31272#6"/>
+    <flow id="f_12_10800" begin="10800" end="14400" probability="0.005" from="-31272#6" to="-30892#17"/>
+    <flow id="f_13_10800" begin="10800" end="14400" probability="0.005" from="--30892#17" to="-31272#7"/>
+</routes>

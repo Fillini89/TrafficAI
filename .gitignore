@@ -1,0 +1,26 @@
+# --- Python Caches ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Virtual Environments (на будущее) ---
+venv/
+env/
+.env
+
+# --- SUMO & RL Project Outputs ---
+# Игнорируем логи обучения и CSV файлы
+outputs/
+
+# Игнорируем промежуточные автосохранения (их там сотни)
+checkpoints/
+
+# --- OS Generated Files ---
+.DS_Store
+Thumbs.db
+
+# --- (Опционально) Модели ---
+# Если не хотите загружать тяжелые .zip архивы на GitHub, раскомментируйте строку ниже:
+# *.zip
+# Но если хотите сохранить релизную модель как часть репозитория, добавьте исключение:
+# !ppo_traffic_model_prod.zip
