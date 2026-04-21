@@ -1,7 +1,29 @@
 # config.py
 
 def balanced_reward(traffic_signal):
+    # --- 1. СБОР СЫРЫХ ДАННЫХ (R&D ФАЗА) ---
+    
+    # Справедливость (Accumulated Waiting Time)
+    # Получаем время ожидания по всем входящим полосам и суммируем
+    wait_times = traffic_signal.get_accumulated_waiting_time_per_lane()
+    total_wait_time = sum(wait_times) if isinstance(wait_times, (list, tuple)) else sum(wait_times.values())
+    
+    # Стратегия (Pressure)
+    # Встроенная метрика: количество машин въезжающих МИНУС выезжающих
+    pressure = traffic_signal.get_pressure()
+    
+    # Статус-кво (Длина очереди)
     queue = traffic_signal.get_total_queued()
+    
+    # --- 2. ВРЕМЕННЫЙ ЛОГГЕР ---
+    # Чтобы не засорять терминал (у нас 12 потоков и шаг в 4 секунды), 
+    # выводим статистику только 1 раз в виртуальный час.
+    sim_time = traffic_signal.sumo.simulation.getTime()
+    if int(sim_time) % 3600 == 0 and int(sim_time) > 0:
+        hour = int(sim_time // 3600)
+        print(f"📊 [Hour {hour:02d}] R&D Metrics | Queue: {queue:02d} | Wait Time: {total_wait_time:06.1f}s | Pressure: {pressure:05.2f}")
+
+    # --- 3. ФИЗИКА ШТРАФОВ (ПОКА ОСТАВЛЯЕМ СТАРУЮ) ---
     reward = -(queue * 3)
 
     try:
