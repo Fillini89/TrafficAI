@@ -1,9 +1,23 @@
 import gymnasium as gym
 from sumo_rl import SumoEnvironment
 from stable_baselines3 import PPO
-from config import SIM_SETTINGS
+from config import SIM_SETTINGS, TRAIN_SETTINGS
 from custom_obs import RadarObservation
 from chaos_wrapper import ChaosMonkeyWrapper
+import os, glob, re
+
+def get_latest_model(model_dir, base_name):
+    files = glob.glob(os.path.join(model_dir, f"{base_name}_Gen*.zip"))
+    highest_gen = 0
+    latest_model = ""
+    for f in files:
+        match = re.search(rf"{base_name}_Gen(\d+)\.zip", f)
+        if match:
+            gen = int(match.group(1))
+            if gen > highest_gen:
+                highest_gen = gen
+                latest_model = f.replace('.zip', '')
+    return latest_model
 
 def run_visual_test():
     print("🚦 Initialization of environment with GUI...")
@@ -15,8 +29,15 @@ def run_visual_test():
     env = SumoEnvironment(**test_settings)
     env = ChaosMonkeyWrapper(env, chaos_prob=0.005)
     
-    print("🧠 Loading Phase 3 model 'ppo_traffic_model_phase3'...")
-    model = PPO.load("models/ppo_traffic_model_phase3", env=env)
+    base_name = TRAIN_SETTINGS['model_name']
+    latest_model_path = get_latest_model("models", base_name)
+    
+    if not latest_model_path:
+        print("❌ No Gen models found in 'models/' directory!")
+        return
+        
+    print(f"🧠 Loading latest model: '{latest_model_path}'...")
+    model = PPO.load(latest_model_path, env=env)
     
     obs, info = env.reset()
     done = False

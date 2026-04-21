@@ -23,9 +23,8 @@ def balanced_reward(traffic_signal):
 TRAIN_SETTINGS = {
     'num_cpu': 12,                
     'total_timesteps': 3000000,
-    'base_model': 'models/ppo_traffic_model_phase3', # Оставляем просто для истории
-    # 👈 Меняем имя релиза, чтобы не перезаписать прошлый успех
-    'save_model': 'models/ppo_traffic_model_phase4'  
+    # Указываем только базовое имя. Скрипт сам добавит _GenX
+    'model_name': 'ppo_traffic_model'  
 }
 
 # --- НАСТРОЙКИ СИМУЛЯТОРА SUMO ---
@@ -33,12 +32,12 @@ SIM_SETTINGS = {
     'net_file': 'SumoNetwork01.net.xml',
     'route_file': 'routes.rou.xml',
     'num_seconds': 86400,
-    'min_green': 15,
-    'yellow_time': 4,
-    'delta_time': 5,
+    'min_green': 10,
+    'yellow_time': 3,
+    'delta_time': 4,
     'single_agent': True,
-    'time_to_teleport': -1,  # 👈 Передаем параметр "легально" через встроенный функционал sumo-rl
-    'additional_sumo_cmd': '--no-step-log --device.rerouting.probability 1.0', # 👈 Убрали дубликат отсюда
+    'time_to_teleport': -1,
+    'additional_sumo_cmd': '--no-step-log --device.rerouting.probability 1.0',
     'reward_fn': balanced_reward            
 }
 
