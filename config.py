@@ -1,7 +1,7 @@
 # config.py
 
 def balanced_reward(traffic_signal):
-    # 1. СБОР ДАННЫХ
+    # --- 1. СБОР ДАННЫХ (КНУТЫ) ---
     queue = traffic_signal.get_total_queued()
     
     wait_times = traffic_signal.get_accumulated_waiting_time_per_lane()
@@ -9,21 +9,36 @@ def balanced_reward(traffic_signal):
     
     pressure = traffic_signal.get_pressure()
 
-    # 2. НОРМАЛИЗАЦИЯ И ВЕСА (Калибровка боли)
-    # Штраф за длину очереди (вес 0.5)
+    # --- 2. СБОР ДАННЫХ (ПРЯНИК И ЭКОЛОГИЯ) ---
+    # Получаем список всех ID машин, которые сейчас находятся на подъездах к перекрестку
+    vehicles = traffic_signal.get_veh_list()
+    
+    # Собираем их скорости (м/с) и выбросы CO2 (мг/с) через прямое обращение к TraCI
+    if vehicles:
+        speeds = [traffic_signal.sumo.vehicle.getSpeed(v) for v in vehicles]
+        avg_speed = sum(speeds) / len(speeds)
+        
+        co2_emissions = sum([traffic_signal.sumo.vehicle.getCO2Emission(v) for v in vehicles])
+    else:
+        avg_speed = 0.0
+        co2_emissions = 0.0
+
+    # --- 3. НОРМАЛИЗАЦИЯ И КАЛИБРОВКА ---
     penalty_queue = queue * 0.5 
-    
-    # Штраф за давление (вес 0.5). Берем по модулю, так как нас волнует любой дисбаланс перекрестка
     penalty_pressure = abs(pressure) * 0.5 
-    
-    # КРИТИЧЕСКИЙ ШТРАФ: Время ожидания. 
-    # Делим на 100, чтобы сжать масштаб (30 000 секунд превратятся в солидный штраф -300)
     penalty_wait = total_wait_time / 100.0 
+    
+    # Выбросы в час пик огромны (десятки тысяч мг/с), поэтому сильно сжимаем масштаб
+    penalty_co2 = co2_emissions / 10000.0
 
-    # Базовый штраф — это сумма наших нормализованных метрик
-    reward = -(penalty_queue + penalty_pressure + penalty_wait)
+    # ПРЯНИК! Даем плюсовые баллы за высокую среднюю скорость потока (вес 2.0)
+    bonus_speed = avg_speed * 2.0 
 
-    # 3. ШТРАФЫ ЗА ДТП И ЭКСТРЕННОЕ ТОРМОЖЕНИЕ (Оставляем жесткими)
+    # --- 4. ФИНАЛЬНЫЙ БАЛАНС ---
+    # Награда = (Пряник) МИНУС (Все кнуты)
+    reward = bonus_speed - (penalty_queue + penalty_pressure + penalty_wait + penalty_co2)
+
+    # --- 5. КРИТИЧЕСКИЕ ШТРАФЫ (ДТП) ---
     try:
         collisions = traffic_signal.sumo.simulation.getCollidingVehiclesNumber()
         emergency_stops = traffic_signal.sumo.simulation.getEmergencyStoppingVehiclesNumber()
