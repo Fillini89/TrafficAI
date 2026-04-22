@@ -10,10 +10,12 @@ def balanced_reward(traffic_signal):
     pressure = traffic_signal.get_pressure()
 
     # --- 2. СБОР ДАННЫХ (ПРЯНИК И ЭКОЛОГИЯ) ---
-    # Получаем список всех ID машин, которые сейчас находятся на подъездах к перекрестку
-    vehicles = traffic_signal.get_veh_list()
+    # Пуленепробиваемый способ: собираем машины через радар SUMO напрямую
+    vehicles = []
+    for lane in traffic_signal.lanes:
+        vehicles.extend(traffic_signal.sumo.lane.getLastStepVehicleIDs(lane))
     
-    # Собираем их скорости (м/с) и выбросы CO2 (мг/с) через прямое обращение к TraCI
+    # Собираем их скорости (м/с) и выбросы CO2 (мг/с) 
     if vehicles:
         speeds = [traffic_signal.sumo.vehicle.getSpeed(v) for v in vehicles]
         avg_speed = sum(speeds) / len(speeds)
@@ -28,7 +30,7 @@ def balanced_reward(traffic_signal):
     penalty_pressure = abs(pressure) * 0.5 
     penalty_wait = total_wait_time / 100.0 
     
-    # Выбросы в час пик огромны (десятки тысяч мг/с), поэтому сильно сжимаем масштаб
+    # Выбросы в час пик огромны, поэтому сильно сжимаем масштаб
     penalty_co2 = co2_emissions / 10000.0
 
     # ПРЯНИК! Даем плюсовые баллы за высокую среднюю скорость потока (вес 2.0)
