@@ -5,21 +5,22 @@ def balanced_reward(traffic_signal):
     queue = traffic_signal.get_total_queued()
     
     wait_times = traffic_signal.get_accumulated_waiting_time_per_lane()
+    # Считаем сумму для общего фона
     total_wait_time = sum(wait_times) if isinstance(wait_times, (list, tuple)) else sum(wait_times.values())
+    
+    # NEW: Находим сумму ожиданий по полосам
+    max_wait_time = max(wait_times) if wait_times else 0 
     
     pressure = traffic_signal.get_pressure()
 
     # --- 2. СБОР ДАННЫХ (ПРЯНИК И ЭКОЛОГИЯ) ---
-    # Пуленепробиваемый способ: собираем машины через радар SUMO напрямую
     vehicles = []
     for lane in traffic_signal.lanes:
         vehicles.extend(traffic_signal.sumo.lane.getLastStepVehicleIDs(lane))
     
-    # Собираем их скорости (м/с) и выбросы CO2 (мг/с) 
     if vehicles:
         speeds = [traffic_signal.sumo.vehicle.getSpeed(v) for v in vehicles]
         avg_speed = sum(speeds) / len(speeds)
-        
         co2_emissions = sum([traffic_signal.sumo.vehicle.getCO2Emission(v) for v in vehicles])
     else:
         avg_speed = 0.0
@@ -29,27 +30,34 @@ def balanced_reward(traffic_signal):
     penalty_queue = queue * 0.5 
     penalty_pressure = abs(pressure) * 0.5 
     penalty_wait = total_wait_time / 100.0 
-    
-    # Выбросы в час пик огромны, поэтому сильно сжимаем масштаб
     penalty_co2 = co2_emissions / 10000.0
 
-    # ПРЯНИК! Даем плюсовые баллы за высокую среднюю скорость потока (вес 2.0)
+    # ИСПРАВЛЕНИЕ: Даем дополнительный "линейный", а не "экспоненциальный" 
+    # вес самой загруженной полосе. Это сфокусирует ИИ на разгребании худшего затора, 
+    # но не сведет его с ума гигантскими числами.
+    penalty_worst_lane = max_wait_time / 50.0 
+
+    # ПРЯНИКИ
     bonus_speed = avg_speed * 2.0 
+    arrived_cars = traffic_signal.sumo.simulation.getArrivedNumber()
+    bonus_throughput = arrived_cars * 10.0 
 
     # --- 4. ФИНАЛЬНЫЙ БАЛАНС ---
-    # Награда = (Пряник) МИНУС (Все кнуты)
-    reward = bonus_speed - (penalty_queue + penalty_pressure + penalty_wait + penalty_co2)
+    reward = (bonus_speed + bonus_throughput) - (penalty_queue + penalty_pressure + penalty_wait + penalty_worst_lane + penalty_co2)
 
-    # --- 5. КРИТИЧЕСКИЕ ШТРАФЫ (ДТП) ---
+    # --- 5. КРИТИЧЕСКИЕ ШТРАФЫ ---
     try:
         collisions = traffic_signal.sumo.simulation.getCollidingVehiclesNumber()
         emergency_stops = traffic_signal.sumo.simulation.getEmergencyStoppingVehiclesNumber()
+        # NEW: Считываем количество телепортированных из-за затора машин
+        teleports = traffic_signal.sumo.simulation.getStartingTeleportNumber()
 
         if emergency_stops > 0:
             reward -= 15 * emergency_stops 
-            
         if collisions > 0:
             reward -= 200 * collisions      
+        if teleports > 0:
+            reward -= 50 * teleports # Жесткий штраф за мертвые пробки
             
     except Exception:
         pass
