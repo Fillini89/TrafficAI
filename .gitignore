@@ -1,26 +1,55 @@
-# --- Python Caches ---
+# Python caches
 __pycache__/
 *.py[cod]
 *$py.class
 
-# --- Virtual Environments (на будущее) ---
+# Local environments and machine-specific config
+.env
+.venv/
 venv/
 env/
-.env
 
-# --- SUMO & RL Project Outputs ---
-# Игнорируем логи обучения и CSV файлы
-outputs/
-
-# Игнорируем промежуточные автосохранения (их там сотни)
-checkpoints/
-
-# --- OS Generated Files ---
+# IDE / OS noise
+.idea/
+.vscode/
 .DS_Store
 Thumbs.db
 
-# --- (Опционально) Модели ---
-# Если не хотите загружать тяжелые .zip архивы на GitHub, раскомментируйте строку ниже:
-# *.zip
-# Но если хотите сохранить релизную модель как часть репозитория, добавьте исключение:
-# !ppo_traffic_model_prod.zip
+# SUMO / RL runtime noise
+outputs/runtime/
+outputs/tensorboard/
+
+# Keep compact experiment reports in git.
+!outputs/
+!outputs/reports/
+!outputs/reports/holdout/
+!outputs/reports/holdout/*.csv
+!outputs/reports/training/
+!outputs/reports/training/*_summary.csv
+!outputs/reports/training/*_summary.txt
+!outputs/reports/training/*_report.png
+!outputs/reports/comparisons/
+!outputs/reports/comparisons/*.png
+
+# Training reports can include raw per-step metric dumps; keep summaries instead.
+outputs/reports/training/*_metrics.csv
+
+# Stable-Baselines / VecNormalize checkpoints.
+# Final generation models in models/ are intentionally kept trackable because
+# they are small enough here and useful when moving training to another machine.
+checkpoints/
+models/best_Gen*/
+models/best_*/
+
+# Large ad-hoc model exports. Curated TrafficAI generation models are allowed.
+*.zip
+!models/ppo_traffic_model_Gen*.zip
+!models/ppo_traffic_model_smoke_Gen*.zip
+*.pkl
+!models/ppo_traffic_model_Gen*_vecnormalize.pkl
+!models/ppo_traffic_model_smoke_Gen*_vecnormalize.pkl
+
+# Temporary files
+*.tmp
+*.bak
+*.log
