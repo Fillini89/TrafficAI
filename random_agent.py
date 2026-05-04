@@ -1,11 +1,14 @@
 import gymnasium as gym
 from sumo_rl import SumoEnvironment
+from config import DEFAULT_ROUTE_FILE, OUTPUT_DIRS, ensure_output_dirs
+
+ensure_output_dirs()
 
 # 1. Инициализируем среду
 env = SumoEnvironment(
     net_file='SumoNetwork01.net.xml',
-    route_file='routes.rou.xml',
-    out_csv_name='outputs/random_agent',
+    route_file=DEFAULT_ROUTE_FILE,
+    out_csv_name=f'{OUTPUT_DIRS["sumo_misc"]}/random_agent',
     use_gui=True,
     num_seconds=3600,
     min_green=5,

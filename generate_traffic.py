@@ -1,12 +1,14 @@
 import math
+import os
 import random
-from config import TRAFFIC_ROUTES
 
-# Настройки генерации
-SIMULATION_STEPS = 86400  # 24 часа
-INTERVAL = 900            # 15 минут (каждые 15 минут меняется плотность потока)
+from config import HOLDOUT_ROUTE_DIR, TRAIN_ROUTE_DIR, TRAFFIC_ROUTES
 
-# Типы транспорта обернуты в vTypeDistribution для корректной работы тега <flow>
+
+SIMULATION_STEPS = 86400
+INTERVAL = 900
+DAILY_PROFILE_COUNT = 12
+
 V_TYPES = """
     <vTypeDistribution id="mixed_traffic">
         <vType id="car" length="5.0" maxSpeed="15.0" accel="2.6" decel="4.5" sigma="0.5" probability="0.8" guiShape="passenger"/>
@@ -16,50 +18,78 @@ V_TYPES = """
     </vTypeDistribution>
 """
 
-def calculate_wave_probability(time_sec, is_morning_route, is_evening_route):
-    base_prob = 0.01  # Ночной фоновый трафик
+
+def calculate_wave_probability(time_sec, route_id, rng, demand_scale, morning_shift, evening_shift):
     hour = time_sec / 3600.0
+    base_prob = rng.uniform(0.006, 0.016)
+    day_bg = rng.uniform(0.035, 0.085) if 11 < hour < 16 else 0.0
 
-    # Утренний пик (около 08:30)
-    morning_peak = math.sin((hour - 6) / 5 * math.pi) * 0.25 if 6 <= hour <= 11 and is_morning_route else 0
-    # Вечерний пик (около 18:30)
-    evening_peak = math.sin((hour - 16) / 5 * math.pi) * 0.30 if 16 <= hour <= 21 and is_evening_route else 0
-    # Дневной средний фон (с 11 до 16)
-    day_bg = 0.06 if 11 < hour < 16 else 0
+    morning_routes = {"f_4", "f_7", "f_13"}
+    evening_routes = {"f_10", "f_11", "f_12"}
+    morning_peak = 0.0
+    evening_peak = 0.0
 
-    # Шум (±10%), имитируя неравномерность
-    noise = random.uniform(0.9, 1.1)
-    
-    final_prob = (base_prob + morning_peak + evening_peak + day_bg) * noise
-    return max(0.005, min(final_prob, 0.4))
+    morning_start = 6.0 + morning_shift
+    morning_end = 11.0 + morning_shift
+    if morning_start <= hour <= morning_end and route_id in morning_routes:
+        morning_peak = math.sin((hour - morning_start) / 5.0 * math.pi) * rng.uniform(0.16, 0.31)
 
-def generate_routes():
-    with open("routes.rou.xml", "w", encoding="utf-8") as routes:
+    evening_start = 16.0 + evening_shift
+    evening_end = 21.0 + evening_shift
+    if evening_start <= hour <= evening_end and route_id in evening_routes:
+        evening_peak = math.sin((hour - evening_start) / 5.0 * math.pi) * rng.uniform(0.18, 0.35)
+
+    local_noise = rng.uniform(0.85, 1.2)
+    final_prob = (base_prob + day_bg + morning_peak + evening_peak) * local_noise * demand_scale
+    return max(0.002, min(final_prob, 0.45))
+
+
+def generate_daily_routefile(filename, seed, demand_scale=1.0):
+    rng = random.Random(seed)
+    morning_shift = rng.uniform(-0.75, 0.75)
+    evening_shift = rng.uniform(-0.75, 0.75)
+
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    with open(filename, "w", encoding="utf-8") as routes:
         routes.write('<?xml version="1.0" ?>\n')
         routes.write('<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">\n')
-        
-        # Записываем дистрибуцию типов
         routes.write(V_TYPES)
 
         for step in range(0, SIMULATION_STEPS, INTERVAL):
             begin = step
             end = step + INTERVAL
-            
-            routes.write(f'    \n')
+            routes.write("\n")
 
             for route_id, data in TRAFFIC_ROUTES.items():
-                is_morning = route_id == "f_4"
-                is_evening = route_id in ["f_11", "f_12"]
-                prob = calculate_wave_probability(begin, is_morning, is_evening)
-                
-                # Записываем поток с явным указанием type="mixed_traffic"
+                prob = calculate_wave_probability(begin, route_id, rng, demand_scale, morning_shift, evening_shift)
                 routes.write(
                     f'    <flow id="{route_id}_{begin}" begin="{begin}" end="{end}" '
                     f'probability="{prob:.4f}" type="mixed_traffic" from="{data["from"]}" to="{data["to"]}"/>\n'
                 )
 
         routes.write("</routes>\n")
-    print("✅ Файл routes.rou.xml успешно сгенерирован (Суточные волны + Смешанный 3D трафик)!")
+
+
+def generate_route_pool(count=DAILY_PROFILE_COUNT, output_dir=TRAIN_ROUTE_DIR, seed_start=10_000):
+    demand_scales = [0.75, 0.85, 0.95, 1.0, 1.1, 1.2, 1.35, 1.5]
+    generated = []
+
+    for index in range(count):
+        seed = seed_start + index * 137
+        demand_scale = demand_scales[index % len(demand_scales)]
+        filename = os.path.join(output_dir, f"daily_seed{seed}_demand{int(demand_scale * 100):03d}.rou.xml")
+        generate_daily_routefile(filename, seed=seed, demand_scale=demand_scale)
+        generated.append(filename)
+
+    print(f"Generated {len(generated)} daily route files in '{output_dir}'.")
+    return generated
+
+
+def generate_routes():
+    train_routes = generate_route_pool(count=8, output_dir=TRAIN_ROUTE_DIR, seed_start=10_000)
+    holdout_routes = generate_route_pool(count=4, output_dir=HOLDOUT_ROUTE_DIR, seed_start=30_000)
+    return train_routes + holdout_routes
+
 
 if __name__ == "__main__":
     generate_routes()
