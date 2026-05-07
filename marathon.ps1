@@ -12,7 +12,8 @@ while ($true) {
         Write-Host "Training stopped by user. Marathon will not restart." -ForegroundColor Yellow
         break
     }
-    
-    Write-Host "System crash detected (Socket exhaustion). Restarting in 5 seconds..." -ForegroundColor Red
+
+    Write-Host "Training exited with code $LASTEXITCODE. Restarting in 5 seconds..." -ForegroundColor Red
+    Write-Host "Check the preceding traceback/output; this may be socket exhaustion, dependency failure, or a native crash." -ForegroundColor Yellow
     Start-Sleep -Seconds 5
 }

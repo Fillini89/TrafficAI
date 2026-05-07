@@ -31,7 +31,7 @@ as YOLO, object tracking, lane association, and speed estimation.
 The PPO model should receive aggregated lane/intersection metrics, not raw video
 and not simulator-only internals.
 
-Current Gen10/Gen11 observation includes:
+Current Gen10/Gen11/Gen12 observation includes:
 
 - per-lane density,
 - per-lane queue,
@@ -46,8 +46,8 @@ Current Gen10/Gen11 observation includes:
 - min-green switch availability,
 - normalized time of day.
 
-Important: Gen11 fine-tuning intentionally did not change observation shape, so
-it can load Gen10 weights.
+Important: Gen11 and Gen12 fine-tuning intentionally do not change observation
+shape, so Gen12 can warm-start from Gen11 weights.
 
 ## Reward Philosophy
 
@@ -65,6 +65,18 @@ The controller should optimize:
 - no collisions or emergency stops,
 - no gridlock,
 - no long-horizon lane starvation.
+
+Rebuilt Gen12 adds non-compensable fairness without changing observation shape:
+
+- a bounded `tail_wait` penalty over the worst few lane waits, aimed at p95-like
+  fairness rather than only the single worst lane,
+- a fairness gate that attenuates or zeros flow rewards when lane wait debt is
+  severe,
+- convex tail/starvation penalties above fairness thresholds,
+- a bounded `short_phase` penalty for unnecessary short cycling,
+- an external service-debt guardrail for severe lane wait. Rebuilt Gen12 treats
+  90 seconds as soft fairness debt and 120 seconds as both reward starvation and
+  emergency intervention threshold.
 
 ## Why Fairness Matters
 

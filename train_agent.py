@@ -5,13 +5,15 @@ import re
 import time
 
 import gymnasium as gym
+import torch
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList, CheckpointCallback, EvalCallback
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from sumo_rl import SumoEnvironment
 
-from chaos_wrapper import ChaosMonkeyWrapper, PhaseSafetyWrapper, RewardInfoWrapper
+from chaos_wrapper import ChaosMonkeyWrapper, PhaseSafetyWrapper, RewardInfoWrapper, ServiceDebtGuardrailWrapper
+from sb3_compat import load_ppo_compat
 from config import (
     CURRICULUM_SETTINGS,
     EVAL_SETTINGS,
@@ -110,6 +112,12 @@ class RewardComponentCallback(BaseCallback):
         forced_switches = sum(1 for info in infos if info.get("phase_forced_switch"))
         if forced_switches:
             self.logger.record("safety/phase_forced_switches", forced_switches)
+        fairness_forced_switches = sum(1 for info in infos if info.get("fairness_forced_switch"))
+        if fairness_forced_switches:
+            self.logger.record("safety/fairness_forced_switches", fairness_forced_switches)
+        service_debts = [float(info.get("max_service_debt", 0.0)) for info in infos if "max_service_debt" in info]
+        if service_debts:
+            self.logger.record("safety/max_service_debt", sum(service_debts) / len(service_debts))
         return True
 
 
@@ -170,6 +178,8 @@ def create_sumo_env(env_settings, chaos_prob, seed, out_csv_name):
     env_settings = env_settings.copy()
     max_green = env_settings.pop("max_green", 96)
     enforce_max_green = env_settings.pop("enforce_max_green", True)
+    service_debt_threshold = env_settings.pop("service_debt_threshold", 120.0)
+    enforce_service_debt = env_settings.pop("enforce_service_debt", True)
     os.makedirs(os.path.dirname(out_csv_name), exist_ok=True)
     env = SumoEnvironment(
         **env_settings,
@@ -178,6 +188,13 @@ def create_sumo_env(env_settings, chaos_prob, seed, out_csv_name):
         out_csv_name=out_csv_name,
     )
     env = RewardInfoWrapper(env)
+    min_green_steps = max(int(env_settings.get("min_green", 10) / max(env_settings.get("delta_time", 4), 1)), 1)
+    env = ServiceDebtGuardrailWrapper(
+        env,
+        service_threshold_seconds=service_debt_threshold,
+        min_green_steps=min_green_steps,
+        enforce=bool(enforce_service_debt),
+    )
     max_green_steps = max(int(max_green / max(env_settings.get("delta_time", 4), 1)), 1)
     env = PhaseSafetyWrapper(
         env,
@@ -279,15 +296,28 @@ def append_sumo_scale(command, scale):
     return f"{command} --scale {scale}".strip()
 
 
-def get_latest_checkpoint(folder, prefix):
-    files = glob.glob(os.path.join(folder, f"{prefix}*.zip"))
-    if not files:
-        return None, 0
+def get_latest_checkpoint(folder, base_name):
+    files = glob.glob(os.path.join(folder, f"{base_name}_autosave_Gen*_steps.zip"))
+    pattern = re.compile(rf"{re.escape(base_name)}_autosave_Gen(\d+)_(\d+)_steps\.zip$")
+    candidates = []
 
-    latest_file = max(files, key=os.path.getctime)
-    match = re.search(r"_(\d+)_steps\.zip", latest_file)
-    completed_steps = int(match.group(1)) if match else 0
-    return latest_file, completed_steps
+    for file_path in files:
+        match = pattern.match(os.path.basename(file_path))
+        if match:
+            candidates.append(
+                (
+                    os.path.getctime(file_path),
+                    file_path,
+                    int(match.group(1)),
+                    int(match.group(2)),
+                )
+            )
+
+    if not candidates:
+        return None, None, 0
+
+    _, latest_file, checkpoint_gen, completed_steps = max(candidates, key=lambda item: item[0])
+    return latest_file, checkpoint_gen, completed_steps
 
 
 def get_generation_info(model_dir, base_name):
@@ -306,6 +336,13 @@ def model_artifact_paths(model_dir, base_name, generation):
     model_path = os.path.join(model_dir, f"{base_name}_Gen{generation}")
     vecnormalize_path = f"{model_path}_vecnormalize.pkl"
     return model_path, vecnormalize_path
+
+
+def checkpoint_continuation_enabled():
+    return (
+        os.getenv("TRAFFICAI_CONTINUE_CHECKPOINT") == "1"
+        or bool(TRAIN_SETTINGS.get("continue_latest_checkpoint", False))
+    )
 
 
 def build_ppo_kwargs():
@@ -353,6 +390,25 @@ def close_vec_env_quietly(vec_env):
         print(f"VecEnv close warning ignored after interrupt: {exc}")
     except Exception as exc:
         print(f"VecEnv close warning ignored: {exc}")
+
+
+def configure_torch_threads():
+    thread_count = os.getenv("TRAFFICAI_TORCH_NUM_THREADS")
+    if not thread_count:
+        return
+
+    try:
+        thread_count = max(int(thread_count), 1)
+    except ValueError:
+        print(f"Ignoring invalid TRAFFICAI_TORCH_NUM_THREADS={thread_count!r}.")
+        return
+
+    torch.set_num_threads(thread_count)
+    try:
+        torch.set_num_interop_threads(thread_count)
+    except RuntimeError as exc:
+        print(f"Torch interop thread setting ignored: {exc}")
+    print(f"Torch CPU threads per process set to {thread_count}.")
 
 
 def build_callbacks(current_gen, num_cpu, base_name, vecnormalize_path, smoke_mode=False):
@@ -412,9 +468,11 @@ def generate_training_report_if_available(run_name):
 
 if __name__ == "__main__":
     ensure_output_dirs()
+    configure_torch_threads()
     smoke_mode = os.getenv("TRAFFICAI_SMOKE_TEST") == "1"
     num_cpu = TRAIN_SETTINGS["num_cpu"]
-    raw_vec_env = SubprocVecEnv([make_env(i) for i in range(num_cpu)])
+    vec_env_class = DummyVecEnv if num_cpu == 1 else SubprocVecEnv
+    raw_vec_env = vec_env_class([make_env(i) for i in range(num_cpu)])
 
     base_name = f"{TRAIN_SETTINGS['model_name']}_smoke" if smoke_mode else TRAIN_SETTINGS["model_name"]
     vecnormalize_path = (
@@ -424,18 +482,26 @@ if __name__ == "__main__":
     os.makedirs(model_dir, exist_ok=True)
 
     highest_gen = get_generation_info(model_dir, base_name)
-    current_gen = highest_gen + 1 if highest_gen else 1
-    save_model_path = os.path.join(model_dir, f"{base_name}_Gen{current_gen}")
-    checkpoint_prefix = f"{base_name}_autosave_Gen{current_gen}"
+    latest_checkpoint, checkpoint_gen, completed_steps = get_latest_checkpoint("checkpoints", base_name)
+    use_checkpoint = bool(
+        latest_checkpoint
+        and (checkpoint_gen > highest_gen or checkpoint_continuation_enabled())
+    )
+    if latest_checkpoint and not use_checkpoint:
+        print(
+            f"Stale autosave ignored for Gen {checkpoint_gen}: {latest_checkpoint}. "
+            "Set TRAFFICAI_CONTINUE_CHECKPOINT=1 to resume it explicitly."
+        )
 
-    latest_checkpoint, completed_steps = get_latest_checkpoint("checkpoints", checkpoint_prefix)
+    current_gen = checkpoint_gen if use_checkpoint else (highest_gen + 1 if highest_gen else 1)
+    save_model_path = os.path.join(model_dir, f"{base_name}_Gen{current_gen}")
     warm_start_model = None
     warm_start_vecnormalize = None
     warm_start_enabled = (
         TRAIN_SETTINGS.get("warm_start_latest_model")
         and os.getenv("TRAFFICAI_DISABLE_WARM_START") != "1"
     )
-    if not latest_checkpoint and warm_start_enabled and highest_gen:
+    if not use_checkpoint and warm_start_enabled and highest_gen:
         warm_start_model, warm_start_vecnormalize = model_artifact_paths(model_dir, base_name, highest_gen)
         if not os.path.exists(f"{warm_start_model}.zip"):
             warm_start_model = None
@@ -444,19 +510,19 @@ if __name__ == "__main__":
 
     vec_env = wrap_vec_normalize(
         raw_vec_env,
-        vecnormalize_path if latest_checkpoint else warm_start_vecnormalize,
+        vecnormalize_path if use_checkpoint else warm_start_vecnormalize,
         training=True,
     )
 
-    if latest_checkpoint:
+    if use_checkpoint:
         print(f"Autosave detected for Gen {current_gen}. Continuing training with: {latest_checkpoint}")
         print(f"Resuming from step {completed_steps}...")
-        model = PPO.load(latest_checkpoint, env=vec_env)
+        model = load_ppo_compat(latest_checkpoint, env=vec_env, ppo_kwargs=build_ppo_kwargs(), verbose=1)
     elif warm_start_model:
         print(f"Warm-starting Gen {current_gen} from Gen {highest_gen}: {warm_start_model}.zip")
         if warm_start_vecnormalize:
             print(f"Loaded VecNormalize stats from: {warm_start_vecnormalize}")
-        model = PPO.load(warm_start_model, env=vec_env)
+        model = load_ppo_compat(warm_start_model, env=vec_env, ppo_kwargs=build_ppo_kwargs(), verbose=1)
         completed_steps = 0
     else:
         print(f"Creating Gen {current_gen} from scratch with current observation/reward stack.")
@@ -465,6 +531,14 @@ if __name__ == "__main__":
 
     total_target_steps = TRAIN_SETTINGS["smoke_timesteps"] if smoke_mode else TRAIN_SETTINGS["total_timesteps"]
     remaining_steps = total_target_steps - completed_steps
+
+    if os.getenv("TRAFFICAI_STARTUP_CHECK") == "1":
+        print(
+            f"Startup check complete for Gen {current_gen}. "
+            f"Completed: {completed_steps}, remaining: {remaining_steps}."
+        )
+        close_vec_env_quietly(vec_env)
+        raise SystemExit(0)
 
     if remaining_steps <= 0:
         print(f"Model has already reached or exceeded the target of {total_target_steps} steps.")

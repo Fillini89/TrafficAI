@@ -68,6 +68,155 @@ class PhaseSafetyWrapper(gym.Wrapper):
         return (current + 1) % int(self.action_space.n)
 
 
+class ServiceDebtGuardrailWrapper(gym.Wrapper):
+    """Force service for severely waiting lanes without changing observations."""
+
+    def __init__(self, env, service_threshold_seconds=120.0, min_green_steps=3, enforce=True):
+        super().__init__(env)
+        self.service_threshold_seconds = float(service_threshold_seconds)
+        self.min_green_steps = max(1, int(min_green_steps))
+        self.enforce = enforce
+        self.current_phase = None
+        self.phase_steps = 0
+        self.forced_switches = 0
+        self.last_selected_action = None
+
+    def reset(self, **kwargs):
+        self.current_phase = None
+        self.phase_steps = 0
+        self.forced_switches = 0
+        self.last_selected_action = None
+        return self.env.reset(**kwargs)
+
+    def step(self, action):
+        phase_before = self._green_phase()
+        if phase_before == self.current_phase:
+            self.phase_steps += 1
+        else:
+            self.current_phase = phase_before
+            self.phase_steps = 0
+
+        waits = self._lane_waits()
+        max_service_debt = max(waits.values(), default=0.0)
+        replacement = self._best_service_action(waits) if self.enforce else None
+        forced = False
+        selected_action = None
+
+        if replacement is not None and self.phase_steps >= self.min_green_steps:
+            current_action = self._action_value(action)
+            if current_action is None or int(replacement) != int(current_action):
+                action = int(replacement)
+                forced = True
+                selected_action = int(replacement)
+                self.forced_switches += 1
+                self.phase_steps = 0
+
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        info = dict(info)
+        info["fairness_forced_switch"] = forced
+        info["fairness_forced_switch_count"] = self.forced_switches
+        info["max_service_debt"] = max_service_debt
+        info["selected_debt_phase"] = selected_action
+        self.last_selected_action = selected_action
+        return obs, reward, terminated, truncated, info
+
+    def _traffic_signal(self):
+        traffic_signals = getattr(self.env.unwrapped, "traffic_signals", {})
+        if isinstance(traffic_signals, dict) and traffic_signals:
+            return next(iter(traffic_signals.values()))
+        return None
+
+    def _green_phase(self):
+        traffic_signal = self._traffic_signal()
+        if traffic_signal is None:
+            return None
+        return getattr(traffic_signal, "green_phase", None)
+
+    def _lane_waits(self):
+        traffic_signal = self._traffic_signal()
+        if traffic_signal is None:
+            return {}
+        try:
+            waits = traffic_signal.get_accumulated_waiting_time_per_lane()
+        except Exception:
+            return {}
+        if isinstance(waits, dict):
+            return {lane: float(value) for lane, value in waits.items()}
+        lanes = list(getattr(traffic_signal, "lanes", []))
+        return {lane: float(value) for lane, value in zip(lanes, waits)}
+
+    def _best_service_action(self, waits):
+        if not waits or max(waits.values()) < self.service_threshold_seconds:
+            return None
+        if not hasattr(self.action_space, "n"):
+            return None
+
+        best_action = None
+        best_score = 0.0
+        for action in range(int(self.action_space.n)):
+            served_lanes = self._served_lanes_for_action(action)
+            if not served_lanes:
+                continue
+            score = sum(max(waits.get(lane, 0.0) - self.service_threshold_seconds, 0.0) for lane in served_lanes)
+            if score > best_score:
+                best_score = score
+                best_action = action
+        return best_action
+
+    def _served_lanes_for_action(self, action):
+        traffic_signal = self._traffic_signal()
+        if traffic_signal is None:
+            return set()
+
+        state = self._phase_state(traffic_signal, action)
+        if not state:
+            return set()
+
+        tls_id = getattr(traffic_signal, "id", getattr(traffic_signal, "ts_id", None))
+        if tls_id is None:
+            return set()
+
+        try:
+            controlled_links = traffic_signal.sumo.trafficlight.getControlledLinks(tls_id)
+        except Exception:
+            return set()
+
+        served = set()
+        for index, signal_state in enumerate(str(state)):
+            if signal_state not in {"G", "g"} or index >= len(controlled_links):
+                continue
+            for link in controlled_links[index]:
+                if link and link[0]:
+                    served.add(link[0])
+        return served
+
+    def _phase_state(self, traffic_signal, action):
+        green_phases = getattr(traffic_signal, "green_phases", None)
+        if green_phases and 0 <= int(action) < len(green_phases):
+            phase = green_phases[int(action)]
+            return getattr(phase, "state", phase)
+
+        tls_id = getattr(traffic_signal, "id", getattr(traffic_signal, "ts_id", None))
+        if tls_id is None:
+            return None
+        try:
+            definitions = traffic_signal.sumo.trafficlight.getAllProgramLogics(tls_id)
+            phases = getattr(definitions[0], "phases", None) if definitions else None
+        except Exception:
+            return None
+        if phases and 0 <= int(action) < len(phases):
+            return getattr(phases[int(action)], "state", None)
+        return None
+
+    def _action_value(self, action):
+        try:
+            if hasattr(action, "item"):
+                action = action.item()
+            return int(action)
+        except (TypeError, ValueError):
+            return None
+
+
 class ChaosMonkeyWrapper(gym.Wrapper):
     """Inject temporary lane-blocking breakdowns to train robust policies."""
 

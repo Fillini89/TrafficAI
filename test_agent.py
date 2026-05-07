@@ -2,14 +2,13 @@ import glob
 import os
 import re
 
-from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from sumo_rl import SumoEnvironment
 
 from chaos_wrapper import ChaosMonkeyWrapper, PhaseSafetyWrapper
 from config import SIM_SETTINGS, TRAIN_SETTINGS
 from custom_obs import LegacyRadarObservation, RadarObservation
-from sb3_compat import install_numpy_pickle_aliases
+from sb3_compat import load_ppo_compat
 
 
 def get_latest_model(model_dir, base_name):
@@ -40,14 +39,13 @@ def make_gui_env(gen_num):
 
 
 def safe_ppo_load(model_path, env):
-    install_numpy_pickle_aliases()
     custom_objects = {
         "observation_space": env.observation_space,
         "action_space": env.action_space,
         "lr_schedule": lambda _: 0.0,
         "clip_range": lambda _: 0.0,
     }
-    return PPO.load(model_path, env=env, custom_objects=custom_objects)
+    return load_ppo_compat(model_path, env=env, device="cpu", custom_objects=custom_objects)
 
 
 def run_visual_test():

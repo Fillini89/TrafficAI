@@ -2,7 +2,7 @@ TrafficAI Training Report
 =========================
 
 Run: outputs\tensorboard\ppo_traffic_model_Gen11_0
-Last logged step: 1007616
+Last logged step: 3008444
 
 How to read this report
 -----------------------
@@ -12,15 +12,15 @@ PPO metrics describe training stability. Final model quality should be judged wi
 
 Key Metrics
 -----------
-Episode Reward Mean (rollout/ep_rew_mean) | Higher is better | first=-1.199e+04, last=-7.605e+04, delta=-6.406e+04, min=-8.744e+04, max=-1.199e+04
-Step Reward (reward/reward_total) | Higher is better | first=-9.058, last=-10.42, delta=-1.359, min=-20.61, max=-4.906
-Queued Vehicles (reward/raw_queue) | Lower is better | first=26, last=30.42, delta=4.417, min=18.25, max=52.92
-Total Waiting Time (reward/raw_total_wait) | Lower is better | first=2212, last=4529, delta=2317, min=1421, max=1.104e+04
-Worst-Lane Waiting Time (reward/raw_worst_lane_wait) | Lower is better | first=850, last=1986, delta=1136, min=737.4, max=4373
-Average Speed (reward/raw_avg_speed) | Higher is better | first=3.994, last=2.758, delta=-1.235, min=1.829, max=5.365
+Episode Reward Mean (rollout/ep_rew_mean) | Higher is better | first=-3.612e+04, last=-7.141e+04, delta=-3.529e+04, min=-8.671e+04, max=-3.162e+04
+Step Reward (reward/reward_total) | Higher is better | first=-8.933, last=-13.5, delta=-4.565, min=-19.84, max=-2.297
+Queued Vehicles (reward/raw_queue) | Lower is better | first=22, last=38.75, delta=16.75, min=10.62, max=59.94
+Total Waiting Time (reward/raw_total_wait) | Lower is better | first=1830, last=2581, delta=750.9, min=986.2, max=1.014e+04
+Worst-Lane Waiting Time (reward/raw_worst_lane_wait) | Lower is better | first=901.1, last=1018, delta=116.4, min=363.8, max=4254
+Average Speed (reward/raw_avg_speed) | Higher is better | first=2.857, last=2.424, delta=-0.4332, min=1.671, max=4.651
 Collisions (reward/raw_collisions) | Lower is better | first=0, last=0, delta=0, min=0, max=0
 Emergency Stops (reward/raw_emergency_stops) | Lower is better | first=0, last=0, delta=0, min=0, max=0
-Explained Variance (train/explained_variance) | Higher is better | first=0.9845, last=0.9958, delta=0.01131, min=0.9845, max=0.9998
-Approximate KL (train/approx_kl) | Stable range: about 0.003-0.03 | first=0.02678, last=0.02195, delta=-0.004828, min=0.01914, max=0.03353
-Clip Fraction (train/clip_fraction) | Stable range: about 0.05-0.25 | first=0.1975, last=0.1894, delta=-0.008097, min=0.164, max=0.2232
-Entropy Loss (train/entropy_loss) | Should rise gradually toward 0 | first=-0.6405, last=-0.7148, delta=-0.07431, min=-0.7774, max=-0.5717
+Explained Variance (train/explained_variance) | Higher is better | first=0.9958, last=0.9989, delta=0.003143, min=0.9908, max=0.9999
+Approximate KL (train/approx_kl) | Stable range: about 0.003-0.03 | first=0.02199, last=0.00611, delta=-0.01587, min=0.00611, max=0.02375
+Clip Fraction (train/clip_fraction) | Stable range: about 0.05-0.25 | first=0.2159, last=0.05533, delta=-0.1605, min=0.05533, max=0.2159
+Entropy Loss (train/entropy_loss) | Should rise gradually toward 0 | first=-0.7593, last=-0.4785, delta=0.2808, min=-0.8381, max=-0.4785
