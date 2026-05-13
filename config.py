@@ -67,7 +67,7 @@ def _convex_wait_penalty(values, threshold, norm, high=3.0):
 
 
 def balanced_reward(traffic_signal):
-    """Gen12 rebuilt reward with non-compensable long-tail fairness."""
+    """Current fairness reward: preserve Gen12 tail discipline; cadence lives in wrappers."""
 
     weights = REWARD_WEIGHTS
     queue = float(_safe_call(traffic_signal.get_total_queued))
@@ -165,6 +165,7 @@ def balanced_reward(traffic_signal):
     short_phase_excess = 0.0
     if phase_changed and not hard_fairness_debt:
         short_phase_excess = max(REWARD_LIMITS["short_phase_target"] - previous_phase_hold_seconds, 0.0)
+    phase_change_penalty = 1.0 if phase_changed and not hard_fairness_debt else 0.0
     long_green_active = (
         phase_hold_seconds >= REWARD_LIMITS["max_green_soft"]
         and (starved_lanes > 0 or queue >= REWARD_LIMITS["long_green_queue_threshold"])
@@ -188,6 +189,7 @@ def balanced_reward(traffic_signal):
         "starvation": -weights["starvation"] * starvation_penalty,
         "starved_lanes": -weights["starved_lanes"] * _clip(starved_lanes / REWARD_LIMITS["starved_lanes_norm"], 0.0, 2.0),
         "short_phase": -weights["short_phase"] * _clip(short_phase_excess / REWARD_LIMITS["short_phase_norm"], 0.0, 1.0),
+        "phase_change": -weights["phase_change"] * phase_change_penalty,
         "long_green": -weights["long_green"] * _clip(long_green_excess / REWARD_LIMITS["long_green_excess_norm"], 0.0, 2.0),
         "co2": -weights["co2"] * _clip(co2_emissions / REWARD_LIMITS["co2_norm"], 0.0, 2.0),
         "gridlock": -weights["gridlock"] * _clip(gridlock_seconds / REWARD_LIMITS["gridlock_seconds_norm"], 0.0, 2.0),
@@ -216,6 +218,7 @@ def balanced_reward(traffic_signal):
         "raw_previous_phase_hold_seconds": previous_phase_hold_seconds,
         "raw_phase_changed": 1.0 if phase_changed else 0.0,
         "raw_short_phase_excess": short_phase_excess,
+        "raw_phase_change_penalty": phase_change_penalty,
         "raw_tail_wait_mean": tail_wait_mean,
         "raw_tail_wait_excess": tail_wait_excess,
         "raw_tail_wait_penalty": tail_wait_penalty,
@@ -270,6 +273,7 @@ REWARD_WEIGHTS = {
     "starvation": 7.0,
     "starved_lanes": 3.0,
     "short_phase": 1.4,
+    "phase_change": 0.05,
     "long_green": 1.0,
     "co2": 0.8,
     "gridlock": 6.0,
@@ -317,7 +321,7 @@ REWARD_ABLATIONS = {
     "no_worst_lane": ["worst_lane"],
     "no_tail_wait": ["tail_wait"],
     "no_starvation": ["starvation", "starved_lanes", "tail_wait"],
-    "no_short_phase": ["short_phase"],
+    "no_short_phase": ["short_phase", "phase_change"],
     "no_long_green": ["long_green"],
     "no_co2": ["co2"],
     "no_delta": ["delta_queue", "delta_wait"],
@@ -326,7 +330,7 @@ REWARD_ABLATIONS = {
 
 TRAIN_SETTINGS = {
     "num_cpu": _env_int("TRAFFICAI_NUM_CPU", 12, minimum=1),
-    "total_timesteps": 3000000,
+    "total_timesteps": _env_int("TRAFFICAI_TOTAL_TIMESTEPS", 3000000, minimum=1),
     "model_name": "ppo_traffic_model",
     "tensorboard_log": OUTPUT_DIRS["tensorboard"],
     "vecnormalize_path": "checkpoints/vecnormalize_latest.pkl",
@@ -367,7 +371,7 @@ CURRICULUM_SETTINGS = {
     "enabled": True,
     "episode_seconds": 14400,
     "long_episode_seconds": 86400,
-    "long_episode_probability": 0.45,
+    "long_episode_probability": 0.50,
     "route_dir": TRAIN_ROUTE_DIR,
     "route_patterns": ["daily_*.rou.xml", "stress_*.rou.xml"],
     "fallback_route_files": [DEFAULT_ROUTE_FILE],
@@ -398,7 +402,25 @@ SIM_SETTINGS = {
     "min_green": 10,
     "max_green": 96,
     "enforce_max_green": True,
+    "service_debt_metric": "service_age",
+    "service_debt_soft_threshold": 90.0,
     "service_debt_threshold": 120.0,
+    "service_debt_min_hold": 16.0,
+    "service_debt_target_hold": 24.0,
+    "service_debt_protected_hold": 12.0,
+    "service_debt_adaptive_threshold": 70.0,
+    "service_debt_queue_imbalance_threshold": 5.0,
+    "service_debt_worse_multiplier": 1.0,
+    "service_debt_worse_threshold": 130.0,
+    "cadence_suppression_penalty": -0.075,
+    "service_age_warning_threshold": 150.0,
+    "service_age_critical_threshold": 210.0,
+    "service_age_warning_norm": 60.0,
+    "service_age_critical_norm": 60.0,
+    "service_age_warning_penalty_weight": 0.06,
+    "service_age_critical_penalty_weight": 0.12,
+    "service_age_budget_penalty_clip": 0.25,
+    "service_age_critical_override": True,
     "enforce_service_debt": True,
     "yellow_time": 3,
     "delta_time": 4,

@@ -1,0 +1,26 @@
+TrafficAI Training Report
+=========================
+
+Run: outputs\tensorboard\ppo_traffic_model_Gen14_0
+Last logged step: 3010560
+
+How to read this report
+-----------------------
+Traffic metrics use raw SUMO values. Lower queues/waits are better; higher speed is better.
+Reward metrics are shaped training signals. Use them for trend/debugging, not as final quality proof.
+PPO metrics describe training stability. Final model quality should be judged with holdout evaluation.
+
+Key Metrics
+-----------
+Episode Reward Mean (rollout/ep_rew_mean) | Higher is better | first=-1.052e+05, last=-2.703e+05, delta=-1.651e+05, min=-3.386e+05, max=-1.052e+05
+Step Reward (reward/reward_total) | Higher is better | first=-22.85, last=-41.01, delta=-18.16, min=-55.29, max=-6.196
+Queued Vehicles (reward/raw_queue) | Lower is better | first=24.05, last=45.7, delta=21.65, min=8.95, max=59.95
+Total Waiting Time (reward/raw_total_wait) | Lower is better | first=2273, last=6810, delta=4537, min=918.3, max=1.133e+04
+Worst-Lane Waiting Time (reward/raw_worst_lane_wait) | Lower is better | first=970.5, last=2703, delta=1732, min=361.7, max=4787
+Average Speed (reward/raw_avg_speed) | Higher is better | first=3.46, last=2.165, delta=-1.295, min=1.352, max=5.898
+Collisions (reward/raw_collisions) | Lower is better | first=0, last=0, delta=0, min=0, max=0
+Emergency Stops (reward/raw_emergency_stops) | Lower is better | first=0, last=0, delta=0, min=0, max=0
+Explained Variance (train/explained_variance) | Higher is better | first=0.9951, last=0.9998, delta=0.004695, min=0.9889, max=1
+Approximate KL (train/approx_kl) | Stable range: about 0.003-0.03 | first=0.02515, last=0.007955, delta=-0.0172, min=0.006241, max=0.03433
+Clip Fraction (train/clip_fraction) | Stable range: about 0.05-0.25 | first=0.213, last=0.07327, delta=-0.1397, min=0.05168, max=0.245
+Entropy Loss (train/entropy_loss) | Should rise gradually toward 0 | first=-0.7473, last=-0.6208, delta=0.1264, min=-0.7473, max=-0.5545

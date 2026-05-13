@@ -31,7 +31,7 @@ as YOLO, object tracking, lane association, and speed estimation.
 The PPO model should receive aggregated lane/intersection metrics, not raw video
 and not simulator-only internals.
 
-Current Gen10/Gen11/Gen12 observation includes:
+Current Gen10/Gen11/Gen12/Gen13/Gen14/Gen15/Gen16 observation includes:
 
 - per-lane density,
 - per-lane queue,
@@ -46,8 +46,9 @@ Current Gen10/Gen11/Gen12 observation includes:
 - min-green switch availability,
 - normalized time of day.
 
-Important: Gen11 and Gen12 fine-tuning intentionally do not change observation
-shape, so Gen12 can warm-start from Gen11 weights.
+Important: Gen11 through Gen16 fine-tuning intentionally does not change
+observation shape, so each generation can warm-start from a compatible final
+model pair.
 
 ## Reward Philosophy
 
@@ -77,6 +78,41 @@ Rebuilt Gen12 adds non-compensable fairness without changing observation shape:
 - an external service-debt guardrail for severe lane wait. Rebuilt Gen12 treats
   90 seconds as soft fairness debt and 120 seconds as both reward starvation and
   emergency intervention threshold.
+
+The first Gen13 reward-only smoothing attempt failed: the policy improved
+speed/stopped burden but increased switching and regressed p95/final wait.
+Rebuilt Gen13 preserves the fairness core and moves smoothing into control
+guardrails:
+
+- service-age debt tracks how long a waiting lane has not received serving
+  green,
+- 90/120 seconds are soft/hard service-age thresholds,
+- non-urgent changes before 24 seconds actual hold are suppressed,
+- reporting separates policy action changes from actual executed signal changes.
+
+Gen14 starts from protected Gen12 rather than Gen13. It keeps Gen12's
+non-compensable fairness reward and Gen13's service-age semantics, but replaces
+hard cadence with adaptive cadence:
+
+- normal non-urgent changes are suppressed only before about 16 seconds actual
+  hold,
+- target hold is about 24 seconds,
+- service age around 75 seconds or high queue imbalance can release cadence
+  after min-green,
+- hard service-age debt at 120 seconds still forces service,
+- protected hold after a fairness-forced service is about 12 seconds.
+
+Gen15 starts from protected Gen14 and keeps the same reward core. It only nudges
+adaptive cadence earlier: 70-second moderate service-age release, 5.0 queue
+imbalance release, 130-second worse-emergency override, and a slightly stronger
+cadence suppression penalty. The intent is to reduce Gen14's remaining
+final-wait/service-age tail without giving back its speed and smoothness gains.
+
+Gen16 starts from protected Gen15 and keeps Gen15's flow/speed intent. It adds a
+service-age budget: warning above 150 seconds, critical above 210 seconds,
+bounded wrapper-level penalty, and reporting for warning/critical service-age
+duration and burden. This treats temporary overload delay as a budget to manage,
+not an automatic policy failure.
 
 ## Why Fairness Matters
 

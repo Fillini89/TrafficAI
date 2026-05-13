@@ -5,7 +5,7 @@ This is the first file a new Codex session should read.
 ## Current Situation
 
 TrafficAI is training a PPO-based traffic-light controller in SUMO. The current
-active model is Gen11, which is a fine-tune from Gen10.
+protected champion is rebuilt Gen12, which is a fine-tune from Gen11.
 
 Gen10 was strong on stress scenarios but failed full 24-hour daily evaluation
 because of lane starvation. Some approaches could wait for extreme periods while
@@ -24,7 +24,46 @@ training run can reuse the Gen12 name while warm-starting again from Gen11.
 
 Rebuilt Gen12 completed training and full holdout. It is the new best model for
 the primary p95/final-wait fairness objective, but it trades away speed and
-stopped-AUC versus Gen11.
+stopped-AUC versus Gen11 and switches more often than desired.
+
+The first Gen13 smoothing attempt failed full holdout: it improved speed and
+stopped burden, but worsened p95/final wait and increased switching. Its model
+lineage was deleted so the project can reuse the Gen13 name.
+
+Rebuilt Gen13 completed full holdout after 3M. It dramatically reduced actual
+switching, but it did not preserve Gen12 p95/final-wait fairness. Treat it as a
+smoothness success and fairness regression, not as the new champion.
+
+Gen14 completed full 3M training and full holdout. It warm-started explicitly
+from protected Gen12, not from Gen13, and added adaptive smoothness rather than
+hard Gen13 cadence. Gen14 is not the pure p95 champion, but it is the strongest
+balanced candidate so far: near-Gen12 p95/final wait, much smoother signals,
+lower stopped burden, and higher mean speed.
+
+The active experiment is Gen15: warm-start from protected final Gen14 with
+minimal-risk micro-tuning. Gen15 keeps the reward weights and observation shape
+unchanged. It only nudges adaptive service-age cadence earlier to reduce Gen14's
+remaining daily final-wait outliers and max service age while preserving speed
+and smoothness.
+
+Gen15 completed full 3M training and full holdout. It improved aggregate final
+wait, p95 wait, stopped burden, and mean speed versus Gen14, and actual switches
+stayed within tolerance. However, max service age worsened materially, so Gen15
+is not an unconditional replacement. Treat Gen15 as the best aggregate balanced
+candidate, Gen14 as the safer service-age balanced baseline, and Gen12 as the
+pure p95/fairness champion.
+
+The active experiment is Gen16: warm-start from protected final Gen15 and keep
+Gen15's aggregate-flow gains while adding service-age budget control. Gen16 uses
+warning/critical service-age zones rather than a hard 120-second cap: warning
+above 150 seconds, critical above 210 seconds, bounded penalty, and critical
+debt allowed to break protected hold after min-green.
+
+Gen16 completed full 3M training and full holdout. It is the strongest aggregate
+performance candidate so far: final wait, p95 wait, stopped burden, mean speed,
+and hidden-starvation proxies improved versus Gen15 while actual switching stayed
+flat. The service-age budget goal did not pass: max service age and warning /
+critical budget metrics worsened versus Gen15.
 
 ## Expected Continuation Files
 
@@ -57,6 +96,138 @@ The failed Gen12 final artifacts and autosaves should be absent. If a new
 rebuilt Gen12 autosave exists and no final Gen12 model exists yet, startup should
 resume that Gen12 autosave. To force a historical Gen11 checkpoint continuation,
 set `TRAFFICAI_CONTINUE_CHECKPOINT=1`.
+
+## Correct Gen13 Training Startup
+
+Gen12 is now protected and should not be deleted. Normal startup should
+warm-start Gen13 from the final Gen12 pair:
+
+```text
+models/ppo_traffic_model_Gen12.zip
+models/ppo_traffic_model_Gen12_vecnormalize.pkl
+```
+
+Expected Gen13 startup check:
+
+```text
+Stale autosave ignored for Gen 12
+Warm-starting Gen 13 from Gen 12: models\ppo_traffic_model_Gen12.zip
+Loaded VecNormalize stats from: models\ppo_traffic_model_Gen12_vecnormalize.pkl
+Startup check complete for Gen 13
+```
+
+Gen13 keeps the observation shape and PPO architecture unchanged. It changes
+reward/control behavior only:
+
+- 90/120 seconds now means lane service-age debt, not aggregate lane-wait sum.
+- Flow reward gating remains non-compensable under hard fairness debt.
+- Reward is rebased toward Gen12; hard cadence lives outside the policy.
+- Non-urgent phase changes are suppressed before 24 seconds actual hold.
+- Hard service-age debt at 120 seconds can override cadence after min-green.
+- A fairness-forced service gets a 24-second protected hold unless another lane
+  reaches a worse emergency age around 150 seconds.
+- Reports separate policy action changes from actual executed signal changes.
+
+## Correct Gen14 Training Startup
+
+Gen14 must warm-start from Gen12 even though Gen13 exists. Use:
+
+```powershell
+$env:TRAFFICAI_WARM_START_GEN="12"
+$env:TRAFFICAI_STARTUP_CHECK="1"
+$env:TRAFFICAI_NUM_CPU="1"
+$env:TRAFFICAI_TORCH_NUM_THREADS="1"
+python train_agent.py
+```
+
+Expected output:
+
+```text
+Warm-starting Gen 14 from Gen 12: models\ppo_traffic_model_Gen12.zip
+Loaded VecNormalize stats from: models\ppo_traffic_model_Gen12_vecnormalize.pkl
+Startup check complete for Gen 14
+```
+
+Forbidden output:
+
+```text
+Warm-starting Gen 14 from Gen 13
+```
+
+Gen14 control intent:
+
+- source policy and VecNormalize stats are Gen12;
+- Gen12 and Gen13 artifacts stay intact;
+- 90/120 seconds still means lane service-age debt;
+- normal non-urgent changes are suppressed only before about 16 seconds actual
+  hold;
+- target hold is about 24 seconds;
+- service age around 75 seconds or high queue imbalance can release cadence
+  after min-green;
+- hard service-age debt at 120 seconds still forces service after min-green;
+- protected hold after fairness-forced service is about 12 seconds;
+- worse emergency override is around 135 seconds.
+
+## Correct Gen15 Training Startup
+
+Gen15 must warm-start from Gen14 and keep Gen14 artifacts intact:
+
+```powershell
+$env:TRAFFICAI_WARM_START_GEN="14"
+$env:TRAFFICAI_STARTUP_CHECK="1"
+$env:TRAFFICAI_NUM_CPU="1"
+$env:TRAFFICAI_TORCH_NUM_THREADS="1"
+python train_agent.py
+```
+
+Expected output:
+
+```text
+Warm-starting Gen 15 from Gen 14: models\ppo_traffic_model_Gen14.zip
+Loaded VecNormalize stats from: models\ppo_traffic_model_Gen14_vecnormalize.pkl
+Startup check complete for Gen 15
+```
+
+Gen15 micro-tuning:
+
+- reward weights unchanged;
+- observation/PPO architecture unchanged;
+- long daily probability is 0.50;
+- adaptive service release is 70 seconds;
+- queue imbalance release is 5.0;
+- hard service threshold stays 120 seconds;
+- protected hold stays 12 seconds;
+- worse emergency override is 130 seconds;
+- cadence suppression penalty is -0.075.
+
+## Correct Gen16 Training Startup
+
+Gen16 must warm-start from Gen15 and keep Gen15 artifacts intact:
+
+```powershell
+$env:TRAFFICAI_WARM_START_GEN="15"
+$env:TRAFFICAI_STARTUP_CHECK="1"
+$env:TRAFFICAI_NUM_CPU="1"
+$env:TRAFFICAI_TORCH_NUM_THREADS="1"
+python train_agent.py
+```
+
+Expected output:
+
+```text
+Warm-starting Gen 16 from Gen 15: models\ppo_traffic_model_Gen15.zip
+Loaded VecNormalize stats from: models\ppo_traffic_model_Gen15_vecnormalize.pkl
+Startup check complete for Gen 16
+```
+
+Gen16 service-age budget:
+
+- adaptive cadence defaults remain Gen15-like;
+- warning zone starts at 150 seconds;
+- critical zone starts at 210 seconds;
+- budget penalty is bounded and clipped at 0.25 per step;
+- reports include `service_age_over_150_steps`,
+  `service_age_over_210_steps`, and `service_age_over_150_auc`.
 
 ## Historical Gen11 Checkpoint Startup
 
@@ -237,6 +408,7 @@ generation is desired.
 
 Default assumption right now:
 
-Treat rebuilt Gen12 as the current fairness leader. Gen11 remains the throughput
-baseline and a useful fallback if speed/stopped-AUC are prioritized.
+Treat rebuilt Gen12 as the protected pure p95/fairness leader. Treat Gen14 as
+the safer service-age balanced baseline. Treat Gen16 as the leading aggregate
+performance candidate, but not a complete service-age fix.
 

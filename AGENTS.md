@@ -39,13 +39,31 @@ policy.
 
 ## Current Default Task
 
-The current active experiment is Gen11 fine-tuning from Gen10. If the user asks
-to continue training, first verify whether the intended action is:
+Gen15 has completed training and full holdout. Gen12 remains the pure fairness
+champion, Gen14 remains the safer service-age balanced baseline, and Gen15 is
+the best aggregate balanced candidate but has a max-service-age regression.
+Gen16 is the active experiment from Gen15 using service-age budget control. If
+the user asks to continue training, first verify whether the intended action is:
 
-- continue the same Gen11 checkpoint run,
-- warm-start a new generation from the latest final model,
+- continue an unfinished checkpoint run,
+- warm-start Gen16 from Gen15 with `TRAFFICAI_WARM_START_GEN=15`,
+- warm-start a new generation from Gen14 to preserve service-age safety,
+- warm-start a different new generation from the latest final model,
 - or train from scratch.
 
-At the moment, the intended path is usually to continue Gen11 from its checkpoint
-toward 3,000,000 total steps.
+Current important final pairs:
+
+```text
+models/ppo_traffic_model_Gen12.zip
+models/ppo_traffic_model_Gen12_vecnormalize.pkl
+models/ppo_traffic_model_Gen14.zip
+models/ppo_traffic_model_Gen14_vecnormalize.pkl
+models/ppo_traffic_model_Gen15.zip
+models/ppo_traffic_model_Gen15_vecnormalize.pkl
+```
+
+Do not delete or overwrite Gen14 or Gen15 unless explicitly asked. The next
+iteration should address Gen15's max service-age tail with warning/critical
+service-age budget metrics without giving back its final-wait, speed, and
+stopped-burden gains.
 

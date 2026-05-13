@@ -27,6 +27,10 @@ AGENT_COLORS = {
     "Gen 10": "#F28E2B",
     "Gen 11": "#59A14F",
     "Gen 12": "#B07AA1",
+    "Gen 13": "#E15759",
+    "Gen 14": "#76B7B2",
+    "Gen 15": "#EDC948",
+    "Gen 16": "#FF9DA7",
 }
 
 METRIC_SPECS = {
@@ -34,7 +38,7 @@ METRIC_SPECS = {
     "p95_total_wait": ("95th percentile waiting", "Lower means fewer severe delays", "lower", "{:,.0f}"),
     "stopped_auc": ("Stopped-vehicle burden", "Lower means less stop-and-go over time", "lower", "{:,.0f}"),
     "mean_speed": ("Average network speed", "Higher means traffic keeps moving", "higher", "{:,.2f}"),
-    "phase_switch_count": ("Signal changes", "Lower is smoother, but too low can starve lanes", "lower", "{:,.0f}"),
+    "phase_switch_count": ("Actual signal changes", "Lower is smoother, but too low can starve lanes", "lower", "{:,.0f}"),
 }
 
 FAIRNESS_METRIC_SPECS = {
@@ -47,7 +51,25 @@ FAIRNESS_METRIC_SPECS = {
     "fairness_violation_steps": ("Fairness violation steps", "Lower means fewer hard fairness breaches", "lower", "{:,.0f}"),
 }
 
-ALL_METRIC_SPECS = {**METRIC_SPECS, **FAIRNESS_METRIC_SPECS}
+SMOOTHING_METRIC_SPECS = {
+    "avg_seconds_between_switches": ("Seconds between actual switches", "Higher means less signal jitter", "higher", "{:,.1f}"),
+    "switches_per_hour": ("Actual switches per hour", "Lower means smoother signal service", "lower", "{:,.1f}"),
+    "policy_action_switch_count": ("Policy action changes", "Lower means the learned policy is less twitchy", "lower", "{:,.0f}"),
+    "policy_switches_per_hour": ("Policy switches per hour", "Lower means less policy-level jitter", "lower", "{:,.1f}"),
+    "actual_phase_switch_count": ("Actual signal changes", "Lower means smoother executed service", "lower", "{:,.0f}"),
+    "fairness_forced_switch_count": ("Fairness-forced switches", "Lower means fewer emergency guardrail interventions", "lower", "{:,.0f}"),
+    "fairness_guardrail_suppressed_switch_count": ("Guardrail suppressions", "Lower means fewer prevented twitch switches", "lower", "{:,.0f}"),
+    "cadence_suppressed_switch_count": ("Cadence suppressions", "Lower means the policy respects minimum hold", "lower", "{:,.0f}"),
+    "fairness_guardrail_hold_active_steps": ("Guardrail hold steps", "Lower means fewer emergency protected-hold steps", "lower", "{:,.0f}"),
+    "avg_phase_hold_seconds": ("Average phase hold", "Higher means steadier green service", "higher", "{:,.1f}"),
+    "p95_phase_hold_seconds": ("P95 phase hold", "Lower helps catch overlong holds", "lower", "{:,.1f}"),
+    "max_service_age": ("Max service age", "Lower means waiting approaches get served sooner", "lower", "{:,.1f}"),
+    "service_age_over_150_steps": ("Service age >150s steps", "Lower means fewer warning-zone service delays", "lower", "{:,.0f}"),
+    "service_age_over_210_steps": ("Service age >210s steps", "Lower means fewer critical service delays", "lower", "{:,.0f}"),
+    "service_age_over_150_auc": ("Service-age warning burden", "Lower means less duration and depth above 150s", "lower", "{:,.0f}"),
+}
+
+ALL_METRIC_SPECS = {**METRIC_SPECS, **FAIRNESS_METRIC_SPECS, **SMOOTHING_METRIC_SPECS}
 FAIRNESS_VIOLATION_WAIT_SECONDS = 120.0
 
 
@@ -110,7 +132,25 @@ def make_eval_settings(route_file, seed, num_seconds, observation_class):
     settings = SIM_SETTINGS.copy()
     settings.pop("max_green", None)
     settings.pop("enforce_max_green", None)
+    settings.pop("service_debt_metric", None)
+    settings.pop("service_debt_soft_threshold", None)
     settings.pop("service_debt_threshold", None)
+    settings.pop("service_debt_min_hold", None)
+    settings.pop("service_debt_target_hold", None)
+    settings.pop("service_debt_protected_hold", None)
+    settings.pop("service_debt_adaptive_threshold", None)
+    settings.pop("service_debt_queue_imbalance_threshold", None)
+    settings.pop("service_debt_worse_multiplier", None)
+    settings.pop("service_debt_worse_threshold", None)
+    settings.pop("cadence_suppression_penalty", None)
+    settings.pop("service_age_warning_threshold", None)
+    settings.pop("service_age_critical_threshold", None)
+    settings.pop("service_age_warning_norm", None)
+    settings.pop("service_age_critical_norm", None)
+    settings.pop("service_age_warning_penalty_weight", None)
+    settings.pop("service_age_critical_penalty_weight", None)
+    settings.pop("service_age_budget_penalty_clip", None)
+    settings.pop("service_age_critical_override", None)
     settings.pop("enforce_service_debt", None)
     settings["route_file"] = route_file
     settings["num_seconds"] = num_seconds
@@ -123,16 +163,141 @@ def make_eval_settings(route_file, seed, num_seconds, observation_class):
     return settings
 
 
-def maybe_wrap_service_debt(env, gen_num):
+def service_control_config(gen_num, control_profile):
+    if gen_num < 12:
+        return None
+
+    delta_time = max(SIM_SETTINGS.get("delta_time", 4), 1)
+
+    if control_profile == "current" or (control_profile == "generation" and gen_num >= 16):
+        return {
+            "service_threshold_seconds": SIM_SETTINGS.get("service_debt_threshold", 120.0),
+            "soft_service_threshold_seconds": SIM_SETTINGS.get("service_debt_soft_threshold", 90.0),
+            "min_green_steps": max(int(SIM_SETTINGS.get("min_green", 10) / delta_time), 1),
+            "min_hold_steps": max(int(float(SIM_SETTINGS.get("service_debt_min_hold", 24.0)) / delta_time), 0),
+            "target_hold_steps": max(int(float(SIM_SETTINGS.get("service_debt_target_hold", 32.0)) / delta_time), 0),
+            "protected_hold_steps": max(int(float(SIM_SETTINGS.get("service_debt_protected_hold", 24.0)) / delta_time), 0),
+            "adaptive_service_threshold_seconds": SIM_SETTINGS.get("service_debt_adaptive_threshold", 75.0),
+            "queue_imbalance_threshold": SIM_SETTINGS.get("service_debt_queue_imbalance_threshold", 6.0),
+            "worse_debt_multiplier": SIM_SETTINGS.get("service_debt_worse_multiplier", 1.0),
+            "worse_debt_seconds": SIM_SETTINGS.get("service_debt_worse_threshold", 150.0),
+            "use_service_age": str(SIM_SETTINGS.get("service_debt_metric", "service_age")).lower() == "service_age",
+            "cadence_suppression_penalty": SIM_SETTINGS.get("cadence_suppression_penalty", -0.05),
+            "service_age_warning_seconds": SIM_SETTINGS.get("service_age_warning_threshold", 150.0),
+            "service_age_critical_seconds": SIM_SETTINGS.get("service_age_critical_threshold", 210.0),
+            "service_age_warning_norm": SIM_SETTINGS.get("service_age_warning_norm", 60.0),
+            "service_age_critical_norm": SIM_SETTINGS.get("service_age_critical_norm", 60.0),
+            "service_age_warning_penalty_weight": SIM_SETTINGS.get("service_age_warning_penalty_weight", 0.0),
+            "service_age_critical_penalty_weight": SIM_SETTINGS.get("service_age_critical_penalty_weight", 0.0),
+            "service_age_budget_penalty_clip": SIM_SETTINGS.get("service_age_budget_penalty_clip", 0.0),
+            "service_age_critical_override": bool(SIM_SETTINGS.get("service_age_critical_override", True)),
+            "enforce": bool(SIM_SETTINGS.get("enforce_service_debt", True)),
+        }
+
+    if control_profile == "generation" and gen_num == 15:
+        return {
+            "service_threshold_seconds": SIM_SETTINGS.get("service_debt_threshold", 120.0),
+            "soft_service_threshold_seconds": SIM_SETTINGS.get("service_debt_soft_threshold", 90.0),
+            "min_green_steps": max(int(SIM_SETTINGS.get("min_green", 10) / delta_time), 1),
+            "min_hold_steps": max(int(16.0 / delta_time), 0),
+            "target_hold_steps": max(int(24.0 / delta_time), 0),
+            "protected_hold_steps": max(int(12.0 / delta_time), 0),
+            "adaptive_service_threshold_seconds": 70.0,
+            "queue_imbalance_threshold": 5.0,
+            "worse_debt_multiplier": 1.0,
+            "worse_debt_seconds": 130.0,
+            "use_service_age": True,
+            "cadence_suppression_penalty": -0.075,
+            "service_age_warning_seconds": 150.0,
+            "service_age_critical_seconds": 210.0,
+            "service_age_warning_norm": 60.0,
+            "service_age_critical_norm": 60.0,
+            "service_age_warning_penalty_weight": 0.0,
+            "service_age_critical_penalty_weight": 0.0,
+            "service_age_budget_penalty_clip": 0.0,
+            "service_age_critical_override": False,
+            "enforce": bool(SIM_SETTINGS.get("enforce_service_debt", True)),
+        }
+
+    if control_profile == "generation" and gen_num == 14:
+        return {
+            "service_threshold_seconds": SIM_SETTINGS.get("service_debt_threshold", 120.0),
+            "soft_service_threshold_seconds": SIM_SETTINGS.get("service_debt_soft_threshold", 90.0),
+            "min_green_steps": max(int(SIM_SETTINGS.get("min_green", 10) / delta_time), 1),
+            "min_hold_steps": max(int(16.0 / delta_time), 0),
+            "target_hold_steps": max(int(24.0 / delta_time), 0),
+            "protected_hold_steps": max(int(12.0 / delta_time), 0),
+            "adaptive_service_threshold_seconds": 75.0,
+            "queue_imbalance_threshold": 6.0,
+            "worse_debt_multiplier": 1.0,
+            "worse_debt_seconds": 135.0,
+            "use_service_age": True,
+            "cadence_suppression_penalty": -0.05,
+            "service_age_warning_seconds": 150.0,
+            "service_age_critical_seconds": 210.0,
+            "service_age_warning_norm": 60.0,
+            "service_age_critical_norm": 60.0,
+            "service_age_warning_penalty_weight": 0.0,
+            "service_age_critical_penalty_weight": 0.0,
+            "service_age_budget_penalty_clip": 0.0,
+            "service_age_critical_override": False,
+            "enforce": bool(SIM_SETTINGS.get("enforce_service_debt", True)),
+        }
+
+    if control_profile == "generation" and gen_num == 13:
+        return {
+            "service_threshold_seconds": SIM_SETTINGS.get("service_debt_threshold", 120.0),
+            "soft_service_threshold_seconds": SIM_SETTINGS.get("service_debt_soft_threshold", 90.0),
+            "min_green_steps": max(int(SIM_SETTINGS.get("min_green", 10) / delta_time), 1),
+            "min_hold_steps": max(int(24.0 / delta_time), 0),
+            "target_hold_steps": max(int(32.0 / delta_time), 0),
+            "protected_hold_steps": max(int(24.0 / delta_time), 0),
+            "adaptive_service_threshold_seconds": 999999.0,
+            "queue_imbalance_threshold": 999999.0,
+            "worse_debt_multiplier": 1.0,
+            "worse_debt_seconds": 150.0,
+            "use_service_age": True,
+            "cadence_suppression_penalty": SIM_SETTINGS.get("cadence_suppression_penalty", -0.05),
+            "service_age_warning_seconds": 150.0,
+            "service_age_critical_seconds": 210.0,
+            "service_age_warning_norm": 60.0,
+            "service_age_critical_norm": 60.0,
+            "service_age_warning_penalty_weight": 0.0,
+            "service_age_critical_penalty_weight": 0.0,
+            "service_age_budget_penalty_clip": 0.0,
+            "service_age_critical_override": False,
+            "enforce": bool(SIM_SETTINGS.get("enforce_service_debt", True)),
+        }
+
+    return {
+        "service_threshold_seconds": SIM_SETTINGS.get("service_debt_threshold", 120.0),
+        "soft_service_threshold_seconds": SIM_SETTINGS.get("service_debt_soft_threshold", 90.0),
+        "min_green_steps": max(int(SIM_SETTINGS.get("min_green", 10) / delta_time), 1),
+        "min_hold_steps": 0,
+        "target_hold_steps": 0,
+        "protected_hold_steps": 0,
+        "adaptive_service_threshold_seconds": SIM_SETTINGS.get("service_debt_adaptive_threshold", 75.0),
+        "queue_imbalance_threshold": SIM_SETTINGS.get("service_debt_queue_imbalance_threshold", 6.0),
+        "worse_debt_multiplier": 1.25,
+        "worse_debt_seconds": None,
+        "use_service_age": False,
+        "cadence_suppression_penalty": 0.0,
+        "service_age_warning_seconds": 150.0,
+        "service_age_critical_seconds": 210.0,
+        "service_age_warning_norm": 60.0,
+        "service_age_critical_norm": 60.0,
+        "service_age_warning_penalty_weight": 0.0,
+        "service_age_critical_penalty_weight": 0.0,
+        "service_age_budget_penalty_clip": 0.0,
+        "service_age_critical_override": False,
+        "enforce": bool(SIM_SETTINGS.get("enforce_service_debt", True)),
+    }
+
+
+def maybe_wrap_service_debt(env, gen_num, control_profile):
     if gen_num < 12:
         return env
-    min_green_steps = max(int(SIM_SETTINGS.get("min_green", 10) / max(SIM_SETTINGS.get("delta_time", 4), 1)), 1)
-    return ServiceDebtGuardrailWrapper(
-        env,
-        service_threshold_seconds=SIM_SETTINGS.get("service_debt_threshold", 120.0),
-        min_green_steps=min_green_steps,
-        enforce=bool(SIM_SETTINGS.get("enforce_service_debt", True)),
-    )
+    return ServiceDebtGuardrailWrapper(env, **service_control_config(gen_num, control_profile))
 
 
 def maybe_wrap_phase_safety(env, gen_num):
@@ -146,9 +311,9 @@ def maybe_wrap_phase_safety(env, gen_num):
     )
 
 
-def wrap_eval_env(env, gen_num):
+def wrap_eval_env(env, gen_num, control_profile="generation"):
     env = RewardInfoWrapper(env)
-    env = maybe_wrap_service_debt(env, gen_num)
+    env = maybe_wrap_service_debt(env, gen_num, control_profile)
     return maybe_wrap_phase_safety(env, gen_num)
 
 
@@ -164,7 +329,47 @@ def collect_reward_components(info, reward_rows):
         reward_rows.append(dict(components))
 
 
-def evaluate_baseline(scenario):
+def collect_step_info(info, info_rows):
+    if isinstance(info, list):
+        for item in info:
+            collect_step_info(item, info_rows)
+        return
+    if not isinstance(info, dict):
+        return
+
+    keys = [
+        "phase_hold_steps",
+        "phase_forced_switch",
+        "requested_action",
+        "executed_action",
+        "actual_phase_changed",
+        "actual_phase_switch_count",
+        "fairness_forced_switch",
+        "fairness_forced_switch_count",
+        "fairness_guardrail_suppressed_switch",
+        "fairness_guardrail_suppressed_switch_count",
+        "cadence_suppressed_switch",
+        "cadence_suppressed_switch_count",
+        "cadence_suppression_penalty",
+        "adaptive_cadence_release",
+        "requested_service_debt",
+        "requested_queue_advantage",
+        "fairness_guardrail_hold_active",
+        "fairness_guardrail_hold_steps_remaining",
+        "max_service_debt",
+        "max_service_age",
+        "hard_service_debt",
+        "critical_service_debt",
+        "service_age_warning_excess",
+        "service_age_critical_excess",
+        "service_age_budget_penalty",
+    ]
+    row = {key: info[key] for key in keys if key in info}
+    if row:
+        info_rows.append(row)
+
+
+def evaluate_baseline(scenario, control_profile="generation"):
     env = None
     try:
         env = wrap_eval_env(SumoEnvironment(
@@ -174,29 +379,33 @@ def evaluate_baseline(scenario):
                 scenario["num_seconds"],
                 LegacyRadarObservation,
             )
-        ), gen_num=0)
+        ), gen_num=0, control_profile=control_profile)
         if scenario["chaos_prob"] > 0:
             env = ChaosMonkeyWrapper(env, chaos_prob=scenario["chaos_prob"], seed=scenario["seed"])
 
         obs, info = env.reset()
         done = False
         step_counter = 0
-        phase_switch_count = 0
+        policy_action_switch_count = 0
         previous_action = None
         reward_rows = []
+        info_rows = []
         while not done:
             action = (step_counter // 8) % env.action_space.n
             if previous_action is not None and action != previous_action:
-                phase_switch_count += 1
+                policy_action_switch_count += 1
             previous_action = action
             obs, reward, terminated, truncated, info = env.step(action)
             collect_reward_components(info, reward_rows)
+            collect_step_info(info, info_rows)
             done = terminated or truncated
             step_counter += 1
 
         df = pd.DataFrame(env.unwrapped.metrics)
-        df.attrs["phase_switch_count"] = phase_switch_count
+        df.attrs["policy_action_switch_count"] = policy_action_switch_count
+        df.attrs["phase_switch_count"] = policy_action_switch_count
         df.attrs["reward_components"] = reward_rows
+        df.attrs["step_info"] = info_rows
         print_eval_status("Baseline", df)
         return df
     finally:
@@ -204,7 +413,7 @@ def evaluate_baseline(scenario):
             env.close()
 
 
-def evaluate_model(model_path, gen_num, scenario):
+def evaluate_model(model_path, gen_num, scenario, control_profile="generation"):
     observation_class = get_observation_class(gen_num)
     settings = make_eval_settings(
         scenario["route_file"],
@@ -221,7 +430,7 @@ def evaluate_model(model_path, gen_num, scenario):
                 [
                     lambda: MetricsSnapshotWrapper(
                         ChaosMonkeyWrapper(
-                            wrap_eval_env(SumoEnvironment(**settings), gen_num),
+                            wrap_eval_env(SumoEnvironment(**settings), gen_num, control_profile=control_profile),
                             chaos_prob=scenario["chaos_prob"],
                             seed=scenario["seed"],
                         )
@@ -235,24 +444,28 @@ def evaluate_model(model_path, gen_num, scenario):
 
             obs = env.reset()
             done = [False]
-            phase_switch_count = 0
+            policy_action_switch_count = 0
             previous_action = None
             terminal_metrics = None
             reward_rows = []
+            info_rows = []
             while not done[0]:
                 action, _states = model.predict(obs, deterministic=True)
                 action_value = int(action[0]) if hasattr(action, "__len__") else int(action)
                 if previous_action is not None and action_value != previous_action:
-                    phase_switch_count += 1
+                    policy_action_switch_count += 1
                 previous_action = action_value
                 obs, reward, done, info = env.step(action)
                 collect_reward_components(info, reward_rows)
+                collect_step_info(info, info_rows)
                 if done[0] and info and "terminal_metrics" in info[0]:
                     terminal_metrics = info[0]["terminal_metrics"]
 
             df = pd.DataFrame(terminal_metrics if terminal_metrics is not None else env.venv.envs[0].unwrapped.metrics)
-            df.attrs["phase_switch_count"] = phase_switch_count
+            df.attrs["policy_action_switch_count"] = policy_action_switch_count
+            df.attrs["phase_switch_count"] = policy_action_switch_count
             df.attrs["reward_components"] = reward_rows
+            df.attrs["step_info"] = info_rows
             print_eval_status(f"Gen {gen_num}", df)
             return df
         finally:
@@ -261,29 +474,33 @@ def evaluate_model(model_path, gen_num, scenario):
 
     env = None
     try:
-        env = wrap_eval_env(SumoEnvironment(**settings), gen_num)
+        env = wrap_eval_env(SumoEnvironment(**settings), gen_num, control_profile=control_profile)
         if scenario["chaos_prob"] > 0:
             env = ChaosMonkeyWrapper(env, chaos_prob=scenario["chaos_prob"], seed=scenario["seed"])
 
         model = safe_ppo_load(model_path, env)
         obs, info = env.reset()
         done = False
-        phase_switch_count = 0
+        policy_action_switch_count = 0
         previous_action = None
         reward_rows = []
+        info_rows = []
         while not done:
             action, _states = model.predict(obs, deterministic=True)
             action_value = int(action)
             if previous_action is not None and action_value != previous_action:
-                phase_switch_count += 1
+                policy_action_switch_count += 1
             previous_action = action_value
             obs, reward, terminated, truncated, info = env.step(action)
             collect_reward_components(info, reward_rows)
+            collect_step_info(info, info_rows)
             done = terminated or truncated
 
         df = pd.DataFrame(env.unwrapped.metrics)
-        df.attrs["phase_switch_count"] = phase_switch_count
+        df.attrs["policy_action_switch_count"] = policy_action_switch_count
+        df.attrs["phase_switch_count"] = policy_action_switch_count
         df.attrs["reward_components"] = reward_rows
+        df.attrs["step_info"] = info_rows
         print_eval_status(f"Gen {gen_num}", df)
         return df
     finally:
@@ -307,6 +524,7 @@ def summarize_metrics(label, scenario_name, df):
         return {}
 
     reward_df = pd.DataFrame(df.attrs.get("reward_components", []))
+    step_info_df = pd.DataFrame(df.attrs.get("step_info", []))
 
     def reward_max(column):
         if reward_df.empty or column not in reward_df:
@@ -330,6 +548,105 @@ def summarize_metrics(label, scenario_name, df):
         starved = reward_df.get("raw_starved_lanes", pd.Series(0.0, index=reward_df.index))
         fairness_violation_steps = int(((worst_wait >= FAIRNESS_VIOLATION_WAIT_SECONDS) | (starved >= 2.0)).sum())
 
+    policy_action_switch_count = float(df.attrs.get("policy_action_switch_count", df.attrs.get("phase_switch_count", 0)))
+    duration_seconds = 0.0
+    if "step" in df and not df["step"].empty:
+        duration_seconds = float(df["step"].iloc[-1])
+    if duration_seconds <= 0.0:
+        duration_seconds = float(len(df) * max(SIM_SETTINGS.get("delta_time", 4), 1))
+
+    policy_switches_per_hour = policy_action_switch_count / max(duration_seconds / 3600.0, 1e-9)
+
+    delta_time = float(max(SIM_SETTINGS.get("delta_time", 4), 1))
+    if step_info_df.empty:
+        actual_phase_switch_count = policy_action_switch_count
+        fairness_forced_switch_count = 0.0
+        suppressed_switch_count = 0.0
+        cadence_suppressed_switch_count = 0.0
+        hold_active_steps = 0.0
+        max_service_age = 0.0
+        service_age_over_150_steps = 0.0
+        service_age_over_210_steps = 0.0
+        service_age_over_150_auc = 0.0
+        if "raw_phase_hold_seconds" in reward_df:
+            phase_hold_seconds = pd.to_numeric(reward_df["raw_phase_hold_seconds"], errors="coerce").dropna()
+            avg_phase_hold_seconds = float(phase_hold_seconds.mean()) if not phase_hold_seconds.empty else 0.0
+            p95_phase_hold_seconds = float(phase_hold_seconds.quantile(0.95)) if not phase_hold_seconds.empty else 0.0
+        else:
+            avg_phase_hold_seconds = 0.0
+            p95_phase_hold_seconds = 0.0
+    else:
+        if "actual_phase_switch_count" in step_info_df:
+            actual_phase_switch_count = float(step_info_df["actual_phase_switch_count"].max())
+        else:
+            actual_phase_switch_count = float(
+                step_info_df.get("actual_phase_changed", pd.Series(dtype=float)).astype(bool).sum()
+            )
+        if actual_phase_switch_count <= 0.0:
+            actual_phase_switch_count = policy_action_switch_count
+
+        if "fairness_forced_switch_count" in step_info_df:
+            fairness_forced_switch_count = float(step_info_df["fairness_forced_switch_count"].max())
+        else:
+            fairness_forced_switch_count = float(step_info_df.get("fairness_forced_switch", pd.Series(dtype=float)).astype(bool).sum())
+
+        if "fairness_guardrail_suppressed_switch_count" in step_info_df:
+            suppressed_switch_count = float(step_info_df["fairness_guardrail_suppressed_switch_count"].max())
+        else:
+            suppressed_switch_count = float(
+                step_info_df.get("fairness_guardrail_suppressed_switch", pd.Series(dtype=float)).astype(bool).sum()
+            )
+
+        if "cadence_suppressed_switch_count" in step_info_df:
+            cadence_suppressed_switch_count = float(step_info_df["cadence_suppressed_switch_count"].max())
+        else:
+            cadence_suppressed_switch_count = float(
+                step_info_df.get("cadence_suppressed_switch", pd.Series(dtype=float)).astype(bool).sum()
+            )
+
+        hold_active_steps = float(step_info_df.get("fairness_guardrail_hold_active", pd.Series(dtype=float)).astype(bool).sum())
+        if "max_service_age" in step_info_df:
+            service_age_series = pd.to_numeric(step_info_df["max_service_age"], errors="coerce").fillna(0.0)
+            max_service_age = float(service_age_series.max())
+        else:
+            service_age_series = pd.Series(dtype=float)
+            max_service_age = 0.0
+
+        if "service_age_warning_excess" in step_info_df:
+            warning_excess = pd.to_numeric(step_info_df["service_age_warning_excess"], errors="coerce").fillna(0.0)
+        elif not service_age_series.empty:
+            warning_excess = (service_age_series - 150.0).clip(lower=0.0)
+        else:
+            warning_excess = pd.Series(dtype=float)
+
+        if "service_age_critical_excess" in step_info_df:
+            critical_excess = pd.to_numeric(step_info_df["service_age_critical_excess"], errors="coerce").fillna(0.0)
+        elif not service_age_series.empty:
+            critical_excess = (service_age_series - 210.0).clip(lower=0.0)
+        else:
+            critical_excess = pd.Series(dtype=float)
+
+        service_age_over_150_steps = float((warning_excess > 0.0).sum()) if not warning_excess.empty else 0.0
+        service_age_over_210_steps = float((critical_excess > 0.0).sum()) if not critical_excess.empty else 0.0
+        service_age_over_150_auc = float(warning_excess.sum() * delta_time) if not warning_excess.empty else 0.0
+
+        if "phase_hold_steps" in step_info_df:
+            phase_hold_seconds = pd.to_numeric(step_info_df["phase_hold_steps"], errors="coerce").dropna() * delta_time
+            avg_phase_hold_seconds = float(phase_hold_seconds.mean()) if not phase_hold_seconds.empty else 0.0
+            p95_phase_hold_seconds = float(phase_hold_seconds.quantile(0.95)) if not phase_hold_seconds.empty else 0.0
+        elif "raw_phase_hold_seconds" in reward_df:
+            phase_hold_seconds = pd.to_numeric(reward_df["raw_phase_hold_seconds"], errors="coerce").dropna()
+            avg_phase_hold_seconds = float(phase_hold_seconds.mean()) if not phase_hold_seconds.empty else 0.0
+            p95_phase_hold_seconds = float(phase_hold_seconds.quantile(0.95)) if not phase_hold_seconds.empty else 0.0
+        else:
+            avg_phase_hold_seconds = 0.0
+            p95_phase_hold_seconds = 0.0
+
+    avg_seconds_between_switches = (
+        duration_seconds / actual_phase_switch_count if actual_phase_switch_count > 0 else duration_seconds
+    )
+    switches_per_hour = actual_phase_switch_count / max(duration_seconds / 3600.0, 1e-9)
+
     return {
         "agent": label,
         "scenario": scenario_name,
@@ -339,7 +656,7 @@ def summarize_metrics(label, scenario_name, df):
         "max_stopped": df["system_total_stopped"].max(),
         "stopped_auc": df["system_total_stopped"].sum(),
         "mean_speed": df["system_mean_speed"].mean(),
-        "phase_switch_count": df.attrs.get("phase_switch_count", 0),
+        "phase_switch_count": actual_phase_switch_count,
         "max_raw_worst_lane_wait": reward_max("raw_worst_lane_wait"),
         "p95_raw_worst_lane_wait": reward_p95("raw_worst_lane_wait"),
         "max_raw_starved_lanes": reward_max("raw_starved_lanes"),
@@ -347,6 +664,21 @@ def summarize_metrics(label, scenario_name, df):
         "max_raw_starvation_excess": reward_max("raw_starvation_excess"),
         "max_raw_tail_wait_mean": reward_max("raw_tail_wait_mean"),
         "fairness_violation_steps": fairness_violation_steps,
+        "avg_seconds_between_switches": avg_seconds_between_switches,
+        "switches_per_hour": switches_per_hour,
+        "policy_action_switch_count": policy_action_switch_count,
+        "policy_switches_per_hour": policy_switches_per_hour,
+        "actual_phase_switch_count": actual_phase_switch_count,
+        "fairness_forced_switch_count": fairness_forced_switch_count,
+        "fairness_guardrail_suppressed_switch_count": suppressed_switch_count,
+        "cadence_suppressed_switch_count": cadence_suppressed_switch_count,
+        "fairness_guardrail_hold_active_steps": hold_active_steps,
+        "avg_phase_hold_seconds": avg_phase_hold_seconds,
+        "p95_phase_hold_seconds": p95_phase_hold_seconds,
+        "max_service_age": max_service_age,
+        "service_age_over_150_steps": service_age_over_150_steps,
+        "service_age_over_210_steps": service_age_over_210_steps,
+        "service_age_over_150_auc": service_age_over_150_auc,
     }
 
 
@@ -389,7 +721,7 @@ def build_agent_specs(top_models):
     return specs
 
 
-def build_eval_tasks(scenarios, agent_specs, jobs, worker_stagger_seconds, collect_run_metrics):
+def build_eval_tasks(scenarios, agent_specs, jobs, worker_stagger_seconds, collect_run_metrics, control_profile):
     tasks = []
     task_index = 0
     for scenario_index, scenario in enumerate(scenarios):
@@ -402,6 +734,7 @@ def build_eval_tasks(scenarios, agent_specs, jobs, worker_stagger_seconds, colle
                 "jobs": jobs,
                 "worker_stagger_seconds": worker_stagger_seconds,
                 "collect_run_metrics": collect_run_metrics,
+                "control_profile": control_profile,
             }
             tasks.append(task)
             task_index += 1
@@ -422,10 +755,11 @@ def run_eval_task(task):
             time.sleep((int(task["task_index"]) % jobs) * stagger)
 
         configure_worker_threads()
+        control_profile = task.get("control_profile", "generation")
         if agent_spec["kind"] == "baseline":
-            df = evaluate_baseline(scenario)
+            df = evaluate_baseline(scenario, control_profile=control_profile)
         else:
-            df = evaluate_model(agent_spec["model_path"], agent_spec["gen_num"], scenario)
+            df = evaluate_model(agent_spec["model_path"], agent_spec["gen_num"], scenario, control_profile=control_profile)
 
         summary = summarize_metrics(label, scenario["name"], df)
         if task.get("collect_run_metrics"):
@@ -702,9 +1036,18 @@ def plot_summary_dashboard(summary, suffix):
         "max_raw_starved_lanes": FAIRNESS_METRIC_SPECS["max_raw_starved_lanes"],
         "max_raw_starvation_excess": FAIRNESS_METRIC_SPECS["max_raw_starvation_excess"],
         "fairness_violation_steps": FAIRNESS_METRIC_SPECS["fairness_violation_steps"],
+        "avg_seconds_between_switches": SMOOTHING_METRIC_SPECS["avg_seconds_between_switches"],
+        "switches_per_hour": SMOOTHING_METRIC_SPECS["switches_per_hour"],
+        "policy_action_switch_count": SMOOTHING_METRIC_SPECS["policy_action_switch_count"],
+        "avg_phase_hold_seconds": SMOOTHING_METRIC_SPECS["avg_phase_hold_seconds"],
+        "max_service_age": SMOOTHING_METRIC_SPECS["max_service_age"],
+        "service_age_over_210_steps": SMOOTHING_METRIC_SPECS["service_age_over_210_steps"],
+        "service_age_over_150_auc": SMOOTHING_METRIC_SPECS["service_age_over_150_auc"],
     }
     dashboard_specs = {metric: spec for metric, spec in dashboard_specs.items() if metric in scorecard.columns}
-    fig, axes = plt.subplots(3, 3, figsize=(20, 15), facecolor="white")
+    column_count = 3
+    row_count = max((len(dashboard_specs) + column_count - 1) // column_count, 1)
+    fig, axes = plt.subplots(row_count, column_count, figsize=(20, 4.8 * row_count), facecolor="white")
     axes = axes.flatten()
 
     for index, (metric, (title, subtitle, direction, fmt)) in enumerate(dashboard_specs.items()):
@@ -762,7 +1105,7 @@ def plot_summary_dashboard(summary, suffix):
         color="#374151",
     )
 
-    plt.subplots_adjust(left=0.06, right=0.985, bottom=0.07, top=0.86, hspace=0.65, wspace=0.28)
+    plt.subplots_adjust(left=0.06, right=0.985, bottom=0.06, top=0.88, hspace=0.72, wspace=0.28)
     output_path = os.path.join(OUTPUT_DIRS["holdout_reports"], f"holdout_eval_dashboard_{suffix}.png")
     fig.savefig(output_path, dpi=240)
     plt.close(fig)
@@ -845,6 +1188,47 @@ def write_markdown_report(summary, scorecard, suffix):
                 )
             )
 
+    lines.extend(["", "## Signal Smoothness Check", ""])
+    smoothing_columns = [metric for metric in SMOOTHING_METRIC_SPECS if metric in scorecard.columns]
+    if smoothing_columns:
+        lines.append("| Agent | Actual switches | Policy switches | Seconds between actual switches | Actual switches/hour | Cadence suppressed | Max service age | Avg hold |")
+        lines.append("|---|---:|---:|---:|---:|---:|---:|---:|")
+        for _, row in scorecard.iterrows():
+            lines.append(
+                "| {agent} | {actual} | {policy} | {between} | {per_hour} | {cadence} | {service_age} | {avg_hold} |".format(
+                    agent=row["agent"],
+                    actual=format_metric(row.get("actual_phase_switch_count", row.get("phase_switch_count", 0)), "{:,.0f}"),
+                    policy=format_metric(row.get("policy_action_switch_count", 0), "{:,.0f}"),
+                    between=format_metric(
+                        row.get("avg_seconds_between_switches", 0),
+                        SMOOTHING_METRIC_SPECS["avg_seconds_between_switches"][3],
+                    ),
+                    per_hour=format_metric(row.get("switches_per_hour", 0), SMOOTHING_METRIC_SPECS["switches_per_hour"][3]),
+                    cadence=format_metric(row.get("cadence_suppressed_switch_count", 0), "{:,.0f}"),
+                    service_age=format_metric(row.get("max_service_age", 0), "{:,.1f}"),
+                    avg_hold=format_metric(row.get("avg_phase_hold_seconds", 0), SMOOTHING_METRIC_SPECS["avg_phase_hold_seconds"][3]),
+                )
+            )
+
+    service_budget_columns = [
+        metric for metric in ("service_age_over_150_steps", "service_age_over_210_steps", "service_age_over_150_auc")
+        if metric in scorecard.columns
+    ]
+    if service_budget_columns:
+        lines.extend(["", "## Service-Age Budget Check", ""])
+        lines.append("| Agent | Max service age | >150s steps | >210s steps | >150s burden |")
+        lines.append("|---|---:|---:|---:|---:|")
+        for _, row in scorecard.iterrows():
+            lines.append(
+                "| {agent} | {max_age} | {warning_steps} | {critical_steps} | {warning_auc} |".format(
+                    agent=row["agent"],
+                    max_age=format_metric(row.get("max_service_age", 0), "{:,.1f}"),
+                    warning_steps=format_metric(row.get("service_age_over_150_steps", 0), "{:,.0f}"),
+                    critical_steps=format_metric(row.get("service_age_over_210_steps", 0), "{:,.0f}"),
+                    warning_auc=format_metric(row.get("service_age_over_150_auc", 0), "{:,.0f}"),
+                )
+            )
+
     lines.extend(["", "## Baseline Improvement", ""])
     if baseline is not None:
         lines.append("| Agent | Final wait | P95 wait | Stopped burden | Mean speed |")
@@ -903,6 +1287,12 @@ def parse_args():
     parser.add_argument("--jobs", type=int, default=1, help="Parallel SUMO evaluation workers. Default: 1.")
     parser.add_argument("--worker-stagger-seconds", type=float, default=1.0, help="Delay worker startup slots on Windows. Default: 1.0.")
     parser.add_argument("--no-run-metrics", action="store_true", help="Do not persist per-run metrics CSV files for plotting.")
+    parser.add_argument(
+        "--control-profile",
+        choices=["generation", "current"],
+        default="generation",
+        help="Use generation-matched wrappers, or force current control wrappers for all supported models.",
+    )
     return parser.parse_args()
 
 
@@ -935,6 +1325,7 @@ if __name__ == "__main__":
     mode = "TAIL FULL" if args.tail_regression and args.full else "TAIL QUICK" if args.tail_regression else "FULL" if args.full else "QUICK"
     print(f"{mode} comparison: {len(scenarios)} scenarios x {agent_count} agents = {total_runs} SUMO runs")
     print(f"Models: {[f'Gen {gen}' for gen, _ in reversed(top_models)]}")
+    print(f"Control profile: {args.control_profile}")
 
     jobs = max(int(args.jobs), 1)
     if jobs > 1:
@@ -948,6 +1339,7 @@ if __name__ == "__main__":
             jobs=jobs,
             worker_stagger_seconds=args.worker_stagger_seconds,
             collect_run_metrics=collect_run_metrics,
+            control_profile=args.control_profile,
         )
         print(
             f"Parallel evaluation enabled: jobs={jobs}, "
@@ -960,13 +1352,13 @@ if __name__ == "__main__":
     else:
         for scenario in scenarios:
             print(f"\nScenario: {scenario['name']} ({scenario['num_seconds']} sim seconds)")
-            results = {"Baseline": evaluate_baseline(scenario)}
+            results = {"Baseline": evaluate_baseline(scenario, control_profile=args.control_profile)}
             summary_rows.append(summarize_metrics("Baseline", scenario["name"], results["Baseline"]))
 
             for gen_num, model_path in reversed(top_models):
                 label = f"Gen {gen_num}"
                 print(f"Evaluating {label}: {model_path}")
-                results[label] = evaluate_model(model_path, gen_num, scenario)
+                results[label] = evaluate_model(model_path, gen_num, scenario, control_profile=args.control_profile)
                 summary_rows.append(summarize_metrics(label, scenario["name"], results[label]))
 
             if not args.no_plots:

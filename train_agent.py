@@ -115,9 +115,64 @@ class RewardComponentCallback(BaseCallback):
         fairness_forced_switches = sum(1 for info in infos if info.get("fairness_forced_switch"))
         if fairness_forced_switches:
             self.logger.record("safety/fairness_forced_switches", fairness_forced_switches)
+        actual_switches = sum(1 for info in infos if info.get("actual_phase_changed"))
+        if actual_switches:
+            self.logger.record("safety/actual_phase_switches", actual_switches)
+        cadence_suppressed = sum(1 for info in infos if info.get("cadence_suppressed_switch"))
+        if cadence_suppressed:
+            self.logger.record("safety/cadence_suppressed_switches", cadence_suppressed)
+        suppressed_switches = sum(1 for info in infos if info.get("fairness_guardrail_suppressed_switch"))
+        if suppressed_switches:
+            self.logger.record("safety/fairness_guardrail_suppressed_switches", suppressed_switches)
+        hold_active = sum(1 for info in infos if info.get("fairness_guardrail_hold_active"))
+        if hold_active:
+            self.logger.record("safety/fairness_guardrail_hold_active", hold_active)
+        adaptive_releases = sum(1 for info in infos if info.get("adaptive_cadence_release"))
+        if adaptive_releases:
+            self.logger.record("safety/adaptive_cadence_releases", adaptive_releases)
+        requested_service_debts = [
+            float(info.get("requested_service_debt", 0.0)) for info in infos if "requested_service_debt" in info
+        ]
+        if requested_service_debts:
+            self.logger.record(
+                "safety/requested_service_debt",
+                sum(requested_service_debts) / len(requested_service_debts),
+            )
+        requested_queue_advantages = [
+            float(info.get("requested_queue_advantage", 0.0)) for info in infos if "requested_queue_advantage" in info
+        ]
+        if requested_queue_advantages:
+            self.logger.record(
+                "safety/requested_queue_advantage",
+                sum(requested_queue_advantages) / len(requested_queue_advantages),
+            )
         service_debts = [float(info.get("max_service_debt", 0.0)) for info in infos if "max_service_debt" in info]
         if service_debts:
             self.logger.record("safety/max_service_debt", sum(service_debts) / len(service_debts))
+        service_ages = [float(info.get("max_service_age", 0.0)) for info in infos if "max_service_age" in info]
+        if service_ages:
+            self.logger.record("safety/max_service_age", sum(service_ages) / len(service_ages))
+        warning_excess = [
+            float(info.get("service_age_warning_excess", 0.0))
+            for info in infos
+            if "service_age_warning_excess" in info
+        ]
+        if warning_excess:
+            self.logger.record("safety/service_age_warning_excess", sum(warning_excess) / len(warning_excess))
+        critical_excess = [
+            float(info.get("service_age_critical_excess", 0.0))
+            for info in infos
+            if "service_age_critical_excess" in info
+        ]
+        if critical_excess:
+            self.logger.record("safety/service_age_critical_excess", sum(critical_excess) / len(critical_excess))
+        budget_penalties = [
+            float(info.get("service_age_budget_penalty", 0.0))
+            for info in infos
+            if "service_age_budget_penalty" in info
+        ]
+        if budget_penalties:
+            self.logger.record("safety/service_age_budget_penalty", sum(budget_penalties) / len(budget_penalties))
         return True
 
 
@@ -178,7 +233,25 @@ def create_sumo_env(env_settings, chaos_prob, seed, out_csv_name):
     env_settings = env_settings.copy()
     max_green = env_settings.pop("max_green", 96)
     enforce_max_green = env_settings.pop("enforce_max_green", True)
+    service_debt_metric = env_settings.pop("service_debt_metric", "service_age")
+    service_debt_soft_threshold = env_settings.pop("service_debt_soft_threshold", 90.0)
     service_debt_threshold = env_settings.pop("service_debt_threshold", 120.0)
+    service_debt_min_hold = env_settings.pop("service_debt_min_hold", 24.0)
+    service_debt_target_hold = env_settings.pop("service_debt_target_hold", 32.0)
+    service_debt_protected_hold = env_settings.pop("service_debt_protected_hold", 24.0)
+    service_debt_adaptive_threshold = env_settings.pop("service_debt_adaptive_threshold", 75.0)
+    service_debt_queue_imbalance_threshold = env_settings.pop("service_debt_queue_imbalance_threshold", 6.0)
+    service_debt_worse_multiplier = env_settings.pop("service_debt_worse_multiplier", 1.25)
+    service_debt_worse_threshold = env_settings.pop("service_debt_worse_threshold", None)
+    cadence_suppression_penalty = env_settings.pop("cadence_suppression_penalty", 0.0)
+    service_age_warning_threshold = env_settings.pop("service_age_warning_threshold", 150.0)
+    service_age_critical_threshold = env_settings.pop("service_age_critical_threshold", 210.0)
+    service_age_warning_norm = env_settings.pop("service_age_warning_norm", 60.0)
+    service_age_critical_norm = env_settings.pop("service_age_critical_norm", 60.0)
+    service_age_warning_penalty_weight = env_settings.pop("service_age_warning_penalty_weight", 0.0)
+    service_age_critical_penalty_weight = env_settings.pop("service_age_critical_penalty_weight", 0.0)
+    service_age_budget_penalty_clip = env_settings.pop("service_age_budget_penalty_clip", 0.0)
+    service_age_critical_override = env_settings.pop("service_age_critical_override", False)
     enforce_service_debt = env_settings.pop("enforce_service_debt", True)
     os.makedirs(os.path.dirname(out_csv_name), exist_ok=True)
     env = SumoEnvironment(
@@ -188,14 +261,36 @@ def create_sumo_env(env_settings, chaos_prob, seed, out_csv_name):
         out_csv_name=out_csv_name,
     )
     env = RewardInfoWrapper(env)
-    min_green_steps = max(int(env_settings.get("min_green", 10) / max(env_settings.get("delta_time", 4), 1)), 1)
+    delta_time = max(env_settings.get("delta_time", 4), 1)
+    min_green_steps = max(int(env_settings.get("min_green", 10) / delta_time), 1)
+    min_hold_steps = max(int(float(service_debt_min_hold) / delta_time), 0)
+    target_hold_steps = max(int(float(service_debt_target_hold) / delta_time), 0)
+    protected_hold_steps = max(int(float(service_debt_protected_hold) / delta_time), 0)
     env = ServiceDebtGuardrailWrapper(
         env,
         service_threshold_seconds=service_debt_threshold,
+        soft_service_threshold_seconds=service_debt_soft_threshold,
         min_green_steps=min_green_steps,
+        min_hold_steps=min_hold_steps,
+        target_hold_steps=target_hold_steps,
+        protected_hold_steps=protected_hold_steps,
+        adaptive_service_threshold_seconds=service_debt_adaptive_threshold,
+        queue_imbalance_threshold=service_debt_queue_imbalance_threshold,
+        worse_debt_multiplier=service_debt_worse_multiplier,
+        worse_debt_seconds=service_debt_worse_threshold,
+        use_service_age=str(service_debt_metric).lower() == "service_age",
+        cadence_suppression_penalty=cadence_suppression_penalty,
+        service_age_warning_seconds=service_age_warning_threshold,
+        service_age_critical_seconds=service_age_critical_threshold,
+        service_age_warning_norm=service_age_warning_norm,
+        service_age_critical_norm=service_age_critical_norm,
+        service_age_warning_penalty_weight=service_age_warning_penalty_weight,
+        service_age_critical_penalty_weight=service_age_critical_penalty_weight,
+        service_age_budget_penalty_clip=service_age_budget_penalty_clip,
+        service_age_critical_override=service_age_critical_override,
         enforce=bool(enforce_service_debt),
     )
-    max_green_steps = max(int(max_green / max(env_settings.get("delta_time", 4), 1)), 1)
+    max_green_steps = max(int(max_green / delta_time), 1)
     env = PhaseSafetyWrapper(
         env,
         max_green_steps=max_green_steps,
@@ -343,6 +438,18 @@ def checkpoint_continuation_enabled():
         os.getenv("TRAFFICAI_CONTINUE_CHECKPOINT") == "1"
         or bool(TRAIN_SETTINGS.get("continue_latest_checkpoint", False))
     )
+
+
+def explicit_warm_start_generation():
+    value = os.getenv("TRAFFICAI_WARM_START_GEN")
+    if not value:
+        return None
+    try:
+        generation = int(value)
+    except ValueError:
+        print(f"Ignoring invalid TRAFFICAI_WARM_START_GEN={value!r}.")
+        return None
+    return generation if generation > 0 else None
 
 
 def build_ppo_kwargs():
@@ -497,15 +604,23 @@ if __name__ == "__main__":
     save_model_path = os.path.join(model_dir, f"{base_name}_Gen{current_gen}")
     warm_start_model = None
     warm_start_vecnormalize = None
+    warm_start_gen = None
     warm_start_enabled = (
         TRAIN_SETTINGS.get("warm_start_latest_model")
         and os.getenv("TRAFFICAI_DISABLE_WARM_START") != "1"
     )
     if not use_checkpoint and warm_start_enabled and highest_gen:
-        warm_start_model, warm_start_vecnormalize = model_artifact_paths(model_dir, base_name, highest_gen)
+        requested_warm_start_gen = explicit_warm_start_generation()
+        warm_start_gen = requested_warm_start_gen if requested_warm_start_gen is not None else highest_gen
+        warm_start_model, warm_start_vecnormalize = model_artifact_paths(model_dir, base_name, warm_start_gen)
         if not os.path.exists(f"{warm_start_model}.zip"):
+            print(f"Warm-start Gen {warm_start_gen} model not found: {warm_start_model}.zip")
             warm_start_model = None
         if not os.path.exists(warm_start_vecnormalize):
+            print(f"Warm-start Gen {warm_start_gen} VecNormalize not found: {warm_start_vecnormalize}")
+            warm_start_vecnormalize = None
+        if warm_start_model is None or warm_start_vecnormalize is None:
+            warm_start_model = None
             warm_start_vecnormalize = None
 
     vec_env = wrap_vec_normalize(
@@ -519,7 +634,7 @@ if __name__ == "__main__":
         print(f"Resuming from step {completed_steps}...")
         model = load_ppo_compat(latest_checkpoint, env=vec_env, ppo_kwargs=build_ppo_kwargs(), verbose=1)
     elif warm_start_model:
-        print(f"Warm-starting Gen {current_gen} from Gen {highest_gen}: {warm_start_model}.zip")
+        print(f"Warm-starting Gen {current_gen} from Gen {warm_start_gen}: {warm_start_model}.zip")
         if warm_start_vecnormalize:
             print(f"Loaded VecNormalize stats from: {warm_start_vecnormalize}")
         model = load_ppo_compat(warm_start_model, env=vec_env, ppo_kwargs=build_ppo_kwargs(), verbose=1)

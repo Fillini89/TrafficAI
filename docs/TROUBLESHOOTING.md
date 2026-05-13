@@ -88,6 +88,120 @@ Remove-Item Env:TRAFFICAI_CONTINUE_CHECKPOINT -ErrorAction SilentlyContinue
 If a Gen12 autosave exists and no final Gen12 model exists yet, startup should
 resume that Gen12 autosave automatically.
 
+For the Gen13 experiment, rebuilt Gen12 is protected. Normal startup should
+print:
+
+```text
+Stale autosave ignored for Gen 12
+Warm-starting Gen 13 from Gen 12
+```
+
+If startup resumes a Gen12 autosave unexpectedly, verify that the final Gen12
+model pair exists and avoid deleting it:
+
+```text
+models/ppo_traffic_model_Gen12.zip
+models/ppo_traffic_model_Gen12_vecnormalize.pkl
+```
+
+If rebuilding Gen13 under the same name after a failed run, remove only the
+failed Gen13 lineage before startup:
+
+```text
+models/ppo_traffic_model_Gen13.zip
+models/ppo_traffic_model_Gen13_vecnormalize.pkl
+models/best_Gen13/
+checkpoints/ppo_traffic_model_autosave_Gen13_*_steps.zip
+checkpoints/vecnormalize_latest.pkl
+```
+
+Keep Gen12 final artifacts and reports.
+
+For the Gen14 experiment, Gen12 is still the source model even though Gen13
+exists. Set the explicit warm-start generation:
+
+```powershell
+$env:TRAFFICAI_WARM_START_GEN="12"
+$env:TRAFFICAI_STARTUP_CHECK="1"
+$env:TRAFFICAI_NUM_CPU="1"
+python train_agent.py
+```
+
+Expected:
+
+```text
+Warm-starting Gen 14 from Gen 12
+```
+
+Forbidden:
+
+```text
+Warm-starting Gen 14 from Gen 13
+```
+
+If startup still uses Gen13, check that `TRAFFICAI_WARM_START_GEN=12` is set in
+the same PowerShell session and that the Gen12 model pair exists:
+
+```text
+models/ppo_traffic_model_Gen12.zip
+models/ppo_traffic_model_Gen12_vecnormalize.pkl
+```
+
+For the Gen15 experiment, Gen14 is the protected source model. Set:
+
+```powershell
+$env:TRAFFICAI_WARM_START_GEN="14"
+$env:TRAFFICAI_STARTUP_CHECK="1"
+$env:TRAFFICAI_NUM_CPU="1"
+python train_agent.py
+```
+
+Expected:
+
+```text
+Warm-starting Gen 15 from Gen 14
+```
+
+If startup resumes a stale Gen14 checkpoint unexpectedly, remove
+`TRAFFICAI_CONTINUE_CHECKPOINT` from the session unless the intent is exact
+checkpoint continuation:
+
+```powershell
+Remove-Item Env:TRAFFICAI_CONTINUE_CHECKPOINT -ErrorAction SilentlyContinue
+```
+
+Verify the Gen14 source pair exists:
+
+```text
+models/ppo_traffic_model_Gen14.zip
+models/ppo_traffic_model_Gen14_vecnormalize.pkl
+```
+
+For the Gen16 experiment, Gen15 is the protected source model. Set:
+
+```powershell
+$env:TRAFFICAI_WARM_START_GEN="15"
+$env:TRAFFICAI_STARTUP_CHECK="1"
+$env:TRAFFICAI_NUM_CPU="1"
+python train_agent.py
+```
+
+Expected:
+
+```text
+Warm-starting Gen 16 from Gen 15
+```
+
+If startup resumes a stale Gen15 checkpoint unexpectedly, remove
+`TRAFFICAI_CONTINUE_CHECKPOINT` unless exact checkpoint continuation is intended.
+
+Verify the Gen15 source pair exists:
+
+```text
+models/ppo_traffic_model_Gen15.zip
+models/ppo_traffic_model_Gen15_vecnormalize.pkl
+```
+
 For holdout evaluation, `compare_models.py --jobs N` runs independent
 scenario/agent evaluations in parallel. If SUMO or TraCI starts failing:
 
